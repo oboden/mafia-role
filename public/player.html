@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#121014">
+  <title>Your Mafia Role</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body class="player">
+<main>
+  <div class="brand center">Mafia</div>
+
+  <section id="loading" class="center muted">Loading…</section>
+
+  <section id="gone" class="panel center" hidden>
+    <h2>Game not found</h2>
+    <p class="muted" id="goneMsg"></p>
+  </section>
+
+  <form id="joinForm" class="panel" hidden autocomplete="off">
+    <h1 id="joinTitle">What's your name?</h1>
+    <p class="muted" id="joinHint">The game master will see your name next to your role.</p>
+    <div class="field">
+      <input id="name" type="text" maxlength="24" placeholder="Your name" autocapitalize="words" enterkeyhint="go" required>
+    </div>
+    <button class="block" id="joinBtn" type="submit">Get my role</button>
+    <div class="error" id="error" role="alert"></div>
+  </form>
+
+  <section id="full" class="panel center" hidden>
+    <h2>All roles have been dealt</h2>
+    <p class="muted">Every seat in this game is taken. If you should be playing, ask the game master to remove a seat or deal a new round.</p>
+  </section>
+
+  <section id="role" hidden>
+    <p class="center hello">Hi <strong id="who"></strong>. Keep your screen hidden from others.</p>
+    <div class="card" id="card" role="button" tabindex="0" aria-live="polite">
+      <div id="cardHidden">
+        <div class="big-icon">🂠</div>
+        <p style="font-size: 1.3rem; font-weight: 700; margin-bottom: 4px">Tap to reveal your role</p>
+        <p class="hint">Tap again to hide it</p>
+      </div>
+      <div id="cardShown" hidden>
+        <div class="big-icon" id="icon"></div>
+        <p class="role-name" id="roleName"></p>
+        <p id="roleDesc"></p>
+        <div class="partners" id="partners" hidden></div>
+        <p class="hint small" style="margin-top: 12px">Tap to hide</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  const code = location.pathname.split('/').pop().toUpperCase();
+  const ROLES = {
+    mafia: { icon: '🔪', name: 'Mafia', desc: 'Each night, agree with the other Mafia on someone to eliminate. By day, blend in and avoid suspicion.' },
+    doctor: { icon: '💉', name: 'Doctor', desc: 'Each night, choose one person to save. If the Mafia picks them, they survive.' },
+    villager: { icon: '🏡', name: 'Villager', desc: 'Find the Mafia. Discuss, accuse and vote them out before they outnumber you.' },
+  };
+
+  // One random id per phone, so a refresh or a re-scan gets the same seat back.
+  const memory = {};
+  const store = {
+    get(k) { try { return localStorage.getItem(k); } catch { return memory[k] ?? null; } },
+    set(k, v) { try { localStorage.setItem(k, v); } catch { memory[k] = v; } },
+  };
+  let token = store.get('mafia-token');
+  if (!token) {
+    const bytes = crypto.getRandomValues(new Uint8Array(16));
+    token = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
+    store.set('mafia-token', token);
+  }
+  const savedName = store.get('mafia-name') || '';
+  $('name').value = savedName;
+
+  let view = null;
+  let shownRound = null; // which round's card is on screen
+  let revealed = false;
+
+  function show(id) {
+    for (const s of ['loading', 'gone', 'joinForm', 'full', 'role']) $(s).hidden = s !== id;
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  }
+
+  function renderCard() {
+    const seat = view.seat;
+    const r = ROLES[seat.role];
+    const card = $('card');
+    card.className = 'card' + (revealed ? ` ${seat.role}` : '');
+    $('cardHidden').hidden = revealed;
+    $('cardShown').hidden = !revealed;
+    $('icon').textContent = r.icon;
+    $('roleName').textContent = r.name;
+    $('roleDesc').textContent = r.desc;
+    const p = seat.partners;
+    $('partners').hidden = !p;
+    if (p) {
+      $('partners').innerHTML = p.length
+        ? `<strong>Your fellow Mafia:</strong> ${p.map(esc).join(', ')}`
+        : '<span class="muted">No other Mafia have scanned yet. This updates as they join.</span>';
+    }
+  }
+
+  function render() {
+    if (view.seat) {
+      if (shownRound !== view.round) { revealed = false; shownRound = view.round; }
+      $('who').textContent = view.seat.name;
+      show('role');
+      renderCard();
+      return;
+    }
+    // No seat on this phone yet (first scan, a new round, or the GM removed us).
+    if (view.full) { show('full'); return; }
+    const newRound = shownRound !== null && shownRound !== view.round;
+    const removed = shownRound !== null && shownRound === view.round;
+    $('joinTitle').textContent = newRound ? 'New round!' : removed ? 'You were removed' : "What's your name?";
+    $('joinHint').textContent = newRound
+      ? 'The game master dealt new roles. Tap below to get yours.'
+      : removed
+        ? 'The game master took your seat back. Rejoin if you should be playing.'
+        : 'The game master will see your name next to your role.';
+    $('joinBtn').textContent = newRound ? 'Get my new role' : 'Get my role';
+    if (!$('joinForm').hidden && document.activeElement === $('name')) return;
+    show('joinForm');
+  }
+
+  function toggle() {
+    revealed = !revealed;
+    renderCard();
+  }
+  $('card').addEventListener('click', toggle);
+  $('card').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
+
+  $('joinForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('error').textContent = '';
+    const name = $('name').value.trim();
+    if (!name) { $('error').textContent = 'Please enter your name.'; return; }
+    $('joinBtn').disabled = true;
+    try {
+      const res = await fetch(`/api/rooms/${code}/join`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, name }),
+      });
+      const data = await res.json();
+      if (!res.ok) { $('error').textContent = data.error; return; }
+      store.set('mafia-name', name);
+      view = data;
+      render();
+    } catch {
+      $('error').textContent = "Couldn't reach the game. Check your connection and try again.";
+    } finally {
+      $('joinBtn').disabled = false;
+    }
+  });
+
+  async function start() {
+    let res;
+    try {
+      res = await fetch(`/api/rooms/${code}/me?token=${token}`);
+    } catch {
+      $('loading').textContent = "Couldn't reach the game. Check you're on the same Wi-Fi as the game master.";
+      return;
+    }
+    const data = await res.json();
+    if (!res.ok) {
+      $('goneMsg').textContent = data.error;
+      show('gone');
+      return;
+    }
+    view = data;
+    if (view.seat) shownRound = view.round;
+    render();
+    const events = new EventSource(`/api/rooms/${code}/events?token=${token}`);
+    events.onmessage = (e) => {
+      const next = JSON.parse(e.data);
+      // Keep the round we last showed so render() can tell "new round" from "removed".
+      if (view && view.seat && !next.seat) shownRound = view.round;
+      view = next;
+      render();
+    };
+  }
+  start();
+</script>
+</body>
+</html>

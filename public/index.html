@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mafia Role Dealer</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main style="max-width: 560px">
+  <div class="brand">Mafia</div>
+  <h1>Start a game</h1>
+  <p class="muted">Set the table, then show the QR code. Each phone that scans it is dealt one secret role, and you see who got what.</p>
+
+  <form id="setup" class="panel" autocomplete="off">
+    <div class="field">
+      <label for="players">How many players?</label>
+      <input id="players" type="number" inputmode="numeric" min="3" max="40" value="8" required>
+    </div>
+    <div class="row">
+      <div class="field">
+        <label for="mafia">Mafia</label>
+        <input id="mafia" type="number" inputmode="numeric" min="1" value="2" required>
+      </div>
+      <div class="field">
+        <label for="doctors">Doctors</label>
+        <input id="doctors" type="number" inputmode="numeric" min="0" value="1" required>
+      </div>
+      <div class="field">
+        <label>Villagers</label>
+        <input id="villagers" type="text" value="5" disabled>
+      </div>
+    </div>
+    <div class="field">
+      <label class="check"><input id="seeEachOther" type="checkbox" checked> Mafia can see who the other Mafia are</label>
+    </div>
+    <button class="block" type="submit">Create game and show QR code</button>
+    <div class="error" id="error" role="alert"></div>
+  </form>
+</main>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  let mafiaTouched = false;
+
+  function update() {
+    const p = parseInt($('players').value, 10) || 0;
+    if (!mafiaTouched) $('mafia').value = Math.max(1, Math.floor(p / 4));
+    const v = p - (parseInt($('mafia').value, 10) || 0) - (parseInt($('doctors').value, 10) || 0);
+    $('villagers').value = v;
+  }
+  $('players').addEventListener('input', update);
+  $('mafia').addEventListener('input', () => { mafiaTouched = true; update(); });
+  $('doctors').addEventListener('input', update);
+  update();
+
+  $('setup').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    $('error').textContent = '';
+    const res = await fetch('/api/rooms', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        players: $('players').value,
+        mafia: $('mafia').value,
+        doctors: $('doctors').value,
+        mafiaSeeEachOther: $('seeEachOther').checked,
+      }),
+    });
+    const data = await res.json();
+    if (!res.ok) { $('error').textContent = data.error; return; }
+    // The game master's secret rides in the URL hash: it never reaches the server
+    // logs, and a refresh or bookmark keeps control of the game.
+    location.href = `/gm/${data.code}#${data.gmToken}`;
+  });
+</script>
+</body>
+</html>
