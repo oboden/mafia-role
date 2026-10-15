@@ -43,9 +43,22 @@ arrives.
 
 ## Illustrations
 
-The role card has an illustration slot. Drop artwork into `public/illustrations/` named
-`mafia.png`, `doctor.png` and `villager.png` (square, transparent background works best) and it
-replaces the placeholder emoji automatically.
+Drop artwork into `public/illustrations/` and it replaces the placeholders automatically:
+
+- **Front page:** `cover.mp4` or `cover.webm` (a short muted loop, so the photo moves),
+  or `cover.gif`, `.webp`, `.png`, `.jpg`. Portrait 4:5 fills the frame. A still image gets a
+  slow drift and film flicker so it still feels alive. Until then an animated stand-in shows.
+- **Role cards:** `mafia.png`, `doctor.png`, `villager.png` (square; `.webp`, `.gif`, `.svg`,
+  `.jpg` also work).
+
+## Haptics
+
+When a player presses and holds their card, the phone buzzes in a rhythm for their role:
+Mafia a heavy heartbeat, Doctor a light flutter, Villager one calm pulse. Every pattern lasts
+the same 700 ms with the same 240 ms of buzzing, so neighbours hear much the same thing. The
+patterns live in `PATTERNS` in `public/common.js`. Android phones play them fully; iPhones
+can't vibrate from a web page, so recent iOS gets a best-effort light tick instead. The host can
+turn haptics off in setup.
 
 ## Play on your Wi-Fi (no hosting needed)
 

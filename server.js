@@ -80,6 +80,7 @@ function parseSetup(body) {
     doctors,
     mafiaSeeEachOther: body.mafiaSeeEachOther !== false,
     revealOnDeath: body.revealOnDeath !== false,
+    haptics: body.haptics !== false,
   };
 }
 
@@ -131,6 +132,7 @@ function normalise(room) {
   room.history = room.history || [];
   room.feedback = room.feedback || [];
   if (room.revealOnDeath === undefined) room.revealOnDeath = true;
+  if (room.haptics === undefined) room.haptics = true;
   return room;
 }
 
@@ -192,6 +194,7 @@ function gmView(room) {
     doctors: room.doctors,
     mafiaSeeEachOther: room.mafiaSeeEachOther,
     revealOnDeath: room.revealOnDeath,
+    haptics: room.haptics,
     phase: room.phase,
     night: room.night,
     report: room.report,
@@ -213,6 +216,7 @@ function playerView(room, token) {
     phase: room.phase,
     night: room.night,
     winner: room.winner,
+    haptics: room.haptics !== false,
     seat: null,
     feedbackSent: room.feedback.some((f) => f.token === token && f.round === room.round),
   };
@@ -412,6 +416,12 @@ const MIME = {
   '.png': 'image/png',
   '.ico': 'image/x-icon',
   '.woff2': 'font/woff2',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.mp4': 'video/mp4',
+  '.webm': 'video/webm',
   '.txt': 'text/plain; charset=utf-8',
 };
 
@@ -453,12 +463,22 @@ async function handle(req, res) {
 
   // Pages
   if (method === 'GET' && parts.length === 0) return serveFile(res, 'index.html');
+  if (method === 'GET' && parts.length === 1 && parts[0] === 'new') return serveFile(res, 'setup.html');
   if (method === 'GET' && parts[0] === 'gm' && parts.length === 2) return serveFile(res, 'gm.html');
   if (method === 'GET' && parts[0] === 'j' && parts.length === 2) return serveFile(res, 'player.html');
   if (method === 'GET' && parts[0] !== 'api') return serveFile(res, parts.join('/'));
 
   // API
   if (method === 'GET' && url.pathname === '/api/info') return json(res, 200, { lanUrls: lanUrls() });
+
+  // Which artwork files have been dropped into public/illustrations.
+  if (method === 'GET' && url.pathname === '/api/art') {
+    let files = [];
+    try {
+      files = fs.readdirSync(path.join(PUBLIC_DIR, 'illustrations')).filter((f) => /\.(png|jpe?g|webp|gif|mp4|webm|svg)$/i.test(f));
+    } catch { /* no folder yet */ }
+    return json(res, 200, { files });
+  }
 
   if (method === 'POST' && url.pathname === '/api/rooms') {
     const setup = parseSetup(await readBody(req));

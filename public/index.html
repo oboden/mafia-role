@@ -4,94 +4,190 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="theme-color" content="#f4efe4">
-  <title>The Mafia Daily · New game</title>
+  <title>The Mafia Daily</title>
+  <meta name="description" content="Run an in-person game of Mafia from one phone. Players scan a QR code for secret roles.">
   <link rel="stylesheet" href="/style.css">
   <script src="/common.js"></script>
+  <style>
+    .cover { gap: 18px; }
+    .cover .masthead .title { font-size: 2.6rem; }
+    .dateline { display: flex; justify-content: space-between; gap: 8px; font: 700 .72rem/1.2 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--text-2); border-bottom: 1.5px solid var(--line); padding-bottom: 8px; }
+
+    /* The front-page photograph. It moves, like a photo in a magic newspaper. */
+    .photo { margin: 0; display: flex; flex-direction: column; gap: 8px; }
+    .photo .frame {
+      position: relative; overflow: hidden;
+      aspect-ratio: 4 / 5;
+      border: 2.5px solid var(--line);
+      border-radius: 6px;
+      background: var(--ink-800);
+      box-shadow: 5px 5px 0 var(--shadow);
+    }
+    .photo .frame > * { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; display: block; }
+    .photo img.art { animation: drift 18s ease-in-out infinite alternate; transform-origin: 50% 40%; }
+    @keyframes drift { from { transform: scale(1.04) translate(0, 0); } to { transform: scale(1.12) translate(-2%, -2%); } }
+    /* old-film flicker + grain over whatever is in the frame */
+    .photo .frame::after {
+      content: ''; position: absolute; inset: 0; pointer-events: none;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 1 0 0 0 0 1 0 0 0 0 1 0 0 0 .35 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+      mix-blend-mode: overlay; opacity: .35;
+      animation: flicker 4s steps(8) infinite;
+    }
+    @keyframes flicker { 0%, 100% { opacity: .3; } 30% { opacity: .42; } 55% { opacity: .26; } 80% { opacity: .38; } }
+    .photo figcaption { font: italic 400 .95rem/1.4 var(--display); color: var(--text-2); }
+    .photo figcaption b { font-style: normal; font: 700 .72rem/1 var(--mono); letter-spacing: .08em; text-transform: uppercase; color: var(--text); margin-right: 6px; }
+
+    .lead .display-xl { font-size: 3rem; }
+    .join { display: flex; gap: 8px; align-items: stretch; }
+    .join input { text-transform: uppercase; letter-spacing: .3em; font-weight: 700; text-align: center; }
+    .join input::placeholder { letter-spacing: .12em; font-weight: 400; text-transform: none; }
+    .join button { flex: none; }
+
+    /* Animated stand-in illustration */
+    .scene .flicker { animation: lamp 3.2s infinite; }
+    @keyframes lamp { 0%, 18%, 22%, 60%, 64%, 100% { opacity: 1; } 20%, 62% { opacity: .35; } }
+    .scene .eyes { animation: blink 5s infinite; transform-origin: 200px 165px; transform-box: view-box; }
+    @keyframes blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(.1); } }
+    .scene .ember { animation: ember 2.4s ease-in-out infinite; }
+    @keyframes ember { 0%, 100% { opacity: .6; } 50% { opacity: 1; } }
+    .scene .smoke path { animation: smoke 6s linear infinite; }
+    .scene .smoke path:nth-child(2) { animation-delay: -2s; }
+    .scene .smoke path:nth-child(3) { animation-delay: -4s; }
+    @keyframes smoke { from { transform: translate(0, 10px); opacity: 0; } 20% { opacity: .55; } to { transform: translate(-8px, -60px); opacity: 0; } }
+    .scene .cloud { animation: cloud 40s linear infinite; }
+    @keyframes cloud { from { transform: translateX(-60px); } to { transform: translateX(360px); } }
+    .scene .window-blink { animation: win 9s infinite; }
+    @keyframes win { 0%, 40%, 100% { opacity: .75; } 45%, 70% { opacity: 0; } }
+    .scene .figure { animation: sway 7s ease-in-out infinite; transform-origin: 200px 400px; transform-box: view-box; }
+    @keyframes sway { 0%, 100% { transform: rotate(0); } 50% { transform: rotate(.8deg); } }
+    @media (prefers-reduced-motion: reduce) {
+      .scene *, .photo img.art, .photo .frame::after { animation: none !important; }
+    }
+  </style>
 </head>
 <body>
-<main>
-  <div id="mast"></div>
+<main class="cover">
+  <header class="masthead">
+    <div class="rule"></div>
+    <div class="meta"><span>Vol. I · No. 1</span><span>Price: one secret</span></div>
+    <h1 class="title">The Mafia Daily</h1>
+    <div class="rule thin"></div><div class="rule"></div>
+  </header>
+  <div class="dateline"><span id="today"></span><span>Late edition</span></div>
+
+  <figure class="photo">
+    <div class="frame" id="art">
+      <!-- Stand-in until the real illustration arrives. Put public/illustrations/cover.mp4,
+           .webm, .gif, .webp, .png or .jpg in place and it replaces this automatically. -->
+      <svg class="scene" viewBox="0 0 320 400" role="img" aria-label="A man in a fedora waits under a flickering street lamp at night" preserveAspectRatio="xMidYMid slice">
+        <defs>
+          <radialGradient id="glow" cx="50%" cy="50%" r="50%">
+            <stop offset="0" stop-color="#fbf8f1" stop-opacity=".55"/>
+            <stop offset="1" stop-color="#fbf8f1" stop-opacity="0"/>
+          </radialGradient>
+          <filter id="ink" x="-5%" y="-5%" width="110%" height="110%">
+            <feTurbulence type="fractalNoise" baseFrequency=".03" numOctaves="2" seed="4"/>
+            <feDisplacementMap in="SourceGraphic" scale="2.4"/>
+          </filter>
+        </defs>
+        <rect width="320" height="400" fill="#221f1b"/>
+        <!-- moon and a passing cloud -->
+        <circle cx="252" cy="70" r="24" fill="#f4efe4"/>
+        <path d="M240 62 q4 -3 8 0 M256 78 q3 -2 6 0" stroke="#d6cdb8" stroke-width="2" fill="none" stroke-linecap="round"/>
+        <g class="cloud"><path d="M10 92 q12 -14 28 -6 q10 -12 26 -2 q14 0 12 10 H8 q-6 -2 2 -2 Z" fill="#34302a"/></g>
+        <g filter="url(#ink)">
+          <!-- skyline -->
+          <path d="M0 250 H34 V214 H62 V250 H120 V190 H150 V238 H170 V250 H250 V200 H286 V226 H320 V385 H0 Z" fill="#151311" stroke="#f4efe4" stroke-width="2" stroke-linejoin="round"/>
+          <g fill="#fbf8f1" opacity=".75">
+            <rect x="42" y="222" width="8" height="10"/><rect x="128" y="200" width="8" height="10"/>
+            <rect x="140" y="218" width="6" height="9"/><rect x="262" y="210" width="8" height="10"/>
+          </g>
+          <rect class="window-blink" x="128" y="218" width="8" height="10" fill="#fbf8f1"/>
+          <!-- light cone and lamp -->
+          <g class="flicker">
+            <circle cx="92" cy="140" r="70" fill="url(#glow)"/>
+            <path d="M80 132 H104 L156 385 H26 Z" fill="#fbf8f1" opacity=".09"/>
+          </g>
+          <path d="M70 385 V140 Q70 118 92 118" stroke="#f4efe4" stroke-width="3.5" fill="none" stroke-linecap="round"/>
+          <path d="M83 118 H101 L106 133 H78 Z" fill="#fbf8f1" stroke="#f4efe4" stroke-width="2" stroke-linejoin="round" class="flicker"/>
+          <!-- ground -->
+          <rect y="385" width="320" height="15" fill="#151311"/>
+          <path d="M0 385 H320" stroke="#f4efe4" stroke-width="2.5"/>
+          <path d="M20 393 h18 M70 395 h24 M150 392 h16 M230 394 h22 M282 391 h14" stroke="#6b645a" stroke-width="2" stroke-linecap="round"/>
+          <!-- the man in the fedora -->
+          <g class="figure">
+            <path d="M150 386 L160 232 Q166 196 200 189 Q234 196 240 232 L250 386 Z" fill="#151311" stroke="#f4efe4" stroke-width="2.5" stroke-linejoin="round"/>
+            <path d="M200 191 L186 262 M200 191 L214 262 M158 300 H242" stroke="#f4efe4" stroke-width="2" fill="none" stroke-linecap="round"/>
+            <path d="M182 151 V176 Q200 192 218 176 V151 Z" fill="#151311" stroke="#f4efe4" stroke-width="2"/>
+            <g class="eyes"><ellipse cx="192" cy="165" rx="3.4" ry="1.8" fill="#e5432b"/><ellipse cx="208" cy="165" rx="3.4" ry="1.8" fill="#e5432b"/></g>
+            <path d="M172 150 C172 121 179 112 200 112 C221 112 228 121 228 150 Z" fill="#151311" stroke="#f4efe4" stroke-width="2.5" stroke-linejoin="round"/>
+            <path d="M174 140 H226" stroke="#e5432b" stroke-width="4"/>
+            <ellipse cx="200" cy="151" rx="47" ry="7.5" fill="#151311" stroke="#f4efe4" stroke-width="2.5"/>
+            <path d="M208 181 L226 178" stroke="#f4efe4" stroke-width="3" stroke-linecap="round"/>
+            <circle class="ember" cx="227.5" cy="177.8" r="2.6" fill="#e5432b"/>
+          </g>
+        </g>
+        <g class="smoke" fill="none" stroke="#f4efe4" stroke-width="2" stroke-linecap="round" opacity=".55">
+          <path d="M229 172 c-6 -10 6 -16 0 -26 c-6 -10 6 -14 1 -22"/>
+          <path d="M231 170 c-7 -9 5 -15 -1 -24 c-5 -9 6 -14 2 -21"/>
+          <path d="M228 171 c-5 -11 7 -15 1 -25 c-6 -10 4 -15 0 -22"/>
+        </g>
+      </svg>
+    </div>
+    <figcaption><b>Elm Street, last night.</b>Witnesses say he was waiting for someone. Nobody will say who.</figcaption>
+  </figure>
+
+  <section class="stack lead">
+    <h2 class="display-xl">Mafia in our midst.</h2>
+    <p class="deck">Gather five or more around a table. One phone runs the night, everyone else keeps a secret. Trust no one.</p>
+  </section>
 
   <div class="stack">
-    <h1 class="display-xl">Set the table.</h1>
-    <p class="deck">Pick tonight’s numbers. The deck is shuffled in secret the moment you tap.</p>
+    <a class="btn block" id="startBtn" href="/new" role="button" style="display:flex;align-items:center;justify-content:center;text-decoration:none">Start a game</a>
+    <form class="join" id="join" autocomplete="off">
+      <input id="code" type="text" maxlength="4" placeholder="Got a code?" aria-label="Game code" autocapitalize="characters" enterkeyhint="go">
+      <button class="secondary" type="submit">Join</button>
+    </form>
+    <div class="error" id="joinError" role="alert"></div>
   </div>
-
-  <form id="setup" class="stack-lg grow" autocomplete="off" novalidate>
-    <div class="stack">
-      <div class="stepper">
-        <div class="text"><p class="heading"><label for="players">Players</label></p><p class="hint">3 to 40 people</p></div>
-        <button type="button" data-step="-1" aria-label="Fewer players">−</button>
-        <input id="players" type="number" inputmode="numeric" min="3" max="40" value="8">
-        <button type="button" data-step="1" aria-label="More players">+</button>
-      </div>
-      <div class="stepper">
-        <div class="text"><p class="heading"><label for="mafia">Mafia</label></p><p class="hint">Fewer than everyone else</p></div>
-        <button type="button" data-step="-1" aria-label="Fewer Mafia">−</button>
-        <input id="mafia" type="number" inputmode="numeric" min="1" max="19" value="2">
-        <button type="button" data-step="1" aria-label="More Mafia">+</button>
-      </div>
-      <div class="stepper">
-        <div class="text"><p class="heading"><label for="doctors">Doctors</label></p><p class="hint">0 is fine</p></div>
-        <button type="button" data-step="-1" aria-label="Fewer Doctors">−</button>
-        <input id="doctors" type="number" inputmode="numeric" min="0" max="10" value="1">
-        <button type="button" data-step="1" aria-label="More Doctors">+</button>
-      </div>
-    </div>
-
-    <div class="stack">
-      <label class="check"><input id="seeEachOther" type="checkbox" checked> Mafia can see who the other Mafia are</label>
-      <label class="check"><input id="revealOnDeath" type="checkbox" checked> Reveal a player’s role when they’re out</label>
-    </div>
-
-    <p class="chips"><span class="deck">That leaves</span> <span class="chip accent" id="villagerChip"><span id="villagers">5</span>&nbsp;villagers</span></p>
-
-    <div class="grow"></div>
-    <div class="stack">
-      <div class="error" id="error" role="alert"></div>
-      <button class="block" type="submit">Deal the roles</button>
-    </div>
-  </form>
 </main>
 
 <script>
   const $ = (id) => document.getElementById(id);
-  $('mast').innerHTML = Mafia.masthead('No. 01', 'New game');
-  let mafiaTouched = false;
+  $('today').textContent = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
 
-  function update() {
-    const p = parseInt($('players').value, 10) || 0;
-    if (!mafiaTouched) $('mafia').value = Math.max(1, Math.floor(p / 4));
-    const v = p - (parseInt($('mafia').value, 10) || 0) - (parseInt($('doctors').value, 10) || 0);
-    $('villagers').textContent = v;
-    $('villagerChip').lastChild.textContent = v === 1 ? ' villager' : ' villagers';
-  }
-  $('players').addEventListener('input', update);
-  $('mafia').addEventListener('input', () => { mafiaTouched = true; update(); });
-  $('doctors').addEventListener('input', update);
-  Mafia.wireSteppers($('setup'));
-  update();
-
-  $('setup').addEventListener('submit', async (e) => {
+  $('join').addEventListener('submit', async (e) => {
     e.preventDefault();
-    $('error').textContent = '';
-    const res = await fetch('/api/rooms', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        players: $('players').value,
-        mafia: $('mafia').value,
-        doctors: $('doctors').value,
-        mafiaSeeEachOther: $('seeEachOther').checked,
-        revealOnDeath: $('revealOnDeath').checked,
-      }),
-    });
-    const data = await res.json();
-    if (!res.ok) { $('error').textContent = data.error; return; }
-    // The game master's secret rides in the URL hash: it never reaches the server
-    // logs, and a refresh or bookmark keeps control of the game.
-    location.href = `/gm/${data.code}#${data.gmToken}`;
+    const code = $('code').value.trim().toUpperCase().replace(/[^A-Z]/g, '');
+    $('joinError').textContent = '';
+    if (code.length !== 4) { $('joinError').textContent = 'Game codes are 4 letters, like KRWX.'; return; }
+    const res = await fetch(`/api/rooms/${code}/me`);
+    if (!res.ok) { $('joinError').textContent = 'No game with that code. Check the host’s screen.'; return; }
+    location.href = `/j/${code}`;
   });
+
+  // Swap in the real cover illustration if one has been added.
+  (async function loadArt() {
+    const files = await Mafia.artFiles();
+    const order = ['cover.webm', 'cover.mp4', 'cover.gif', 'cover.webp', 'cover.png', 'cover.jpg', 'cover.jpeg', 'cover.svg'];
+    const file = order.find((f) => files.includes(f));
+    if (!file) return;
+    const frame = $('art');
+    const src = `/illustrations/${file}`;
+    if (/\.(mp4|webm)$/.test(file)) {
+      const v = document.createElement('video');
+      Object.assign(v, { muted: true, loop: true, autoplay: true, playsInline: true });
+      v.setAttribute('aria-label', 'Front-page illustration');
+      v.onloadeddata = () => { frame.replaceChildren(v); v.play().catch(() => {}); };
+      v.src = src;
+    } else {
+      const img = new Image();
+      img.className = 'art';
+      img.alt = 'Front-page illustration';
+      img.onload = () => frame.replaceChildren(img);
+      img.src = src;
+    }
+  })();
 </script>
 </body>
 </html>

@@ -25,7 +25,7 @@ async function letGo(page) {
 async function createGame(browser, { players, mafia, doctors }) {
   const ctx = await phoneCtx(browser);
   const gm = await ctx.newPage();
-  await gm.goto(BASE);
+  await gm.goto(`${BASE}/new`);
   await shot(gm, '00-gm-setup');
   await gm.fill('#players', String(players));
   await gm.fill('#mafia', String(mafia));
@@ -60,6 +60,23 @@ const tap = (gm, text) => gm.getByRole('button', { name: text, exact: true }).cl
 
 (async () => {
   const browser = await chromium.launch(process.env.CHROME ? { executablePath: process.env.CHROME } : {});
+
+  // ===== Part 0: the front page =====
+  {
+    const page = await (await phoneCtx(browser)).newPage();
+    await page.goto(BASE);
+    await page.waitForSelector('svg.scene');
+    await page.waitForTimeout(600);
+    await shot(page, '00a-cover');
+    // Joining with a bad code explains itself.
+    await page.fill('#code', 'ZZZZ');
+    await page.click('#join button');
+    await page.waitForFunction(() => document.querySelector('#joinError').textContent.includes('No game'));
+    await page.click('#startBtn');
+    await page.waitForURL(/\/new$/);
+    await page.waitForSelector('#setup');
+    console.log('part 0 (front page) ok');
+  }
 
   // ===== Part 1: dealing, joining, removing, new rounds (the original features) =====
   {
@@ -290,6 +307,60 @@ const tap = (gm, text) => gm.getByRole('button', { name: text, exact: true }).cl
     assert.match(await gm.textContent('.front-page'), /Mafia take the town/);
     await shot(gm, '31-gm-mafia-win');
     console.log('part 3 (mafia win) ok');
+  }
+
+  // ===== Part 4: haptics on reveal =====
+  {
+    // Read whatever patterns are defined in public/common.js.
+    const probe = await (await phoneCtx(browser)).newPage();
+    await probe.goto(BASE);
+    const EXPECTED = await probe.evaluate(() => Mafia.PATTERNS);
+    const sum = (a) => a.reduce((x, y) => x + y, 0);
+    const buzz = (a) => a.filter((_, i) => i % 2 === 0).reduce((x, y) => x + y, 0);
+    const totals = new Set(Object.values(EXPECTED).map(sum));
+    const buzzing = new Set(Object.values(EXPECTED).map(buzz));
+    if (totals.size > 1 || buzzing.size > 1) {
+      console.warn('WARNING: role haptics differ in length or amount of buzzing. Players nearby may be able to hear who is Mafia.');
+    }
+    // Spy on vibrations (Android) and switch toggles (iPhone).
+    const spy = () => {
+      window.__buzz = [];
+      window.__ticks = 0;
+      navigator.vibrate = (p) => { window.__buzz.push(p); return true; };
+      document.addEventListener('click', (e) => { if (e.target.matches?.('input[switch]')) window.__ticks += 1; }, true);
+    };
+    async function playGame(haptics) {
+      const r = await fetch(`${BASE}/api/rooms`, { method: 'POST', body: JSON.stringify({ players: 4, mafia: 1, doctors: 1, haptics }) }).then((x) => x.json());
+      const results = [];
+      for (const [i, deviceName] of ['Pixel 7', 'Pixel 7', 'Pixel 7', 'iPhone 13'].entries()) {
+        const ctx = await browser.newContext({ ...devices[deviceName] });
+        await ctx.addInitScript(spy);
+        const page = await ctx.newPage();
+        await page.goto(`${BASE}/j/${r.code}`);
+        await page.fill('#name', `P${i}`);
+        await page.click('#joinBtn');
+        await page.waitForSelector('#role:not([hidden])');
+        const role = await peekRole(page);
+        await page.waitForTimeout(450);
+        const buzzes = await page.evaluate(() => window.__buzz);
+        const ticks = await page.evaluate(() => window.__ticks);
+        await letGo(page);
+        results.push({ deviceName, role, buzzes, ticks });
+      }
+      return results;
+    }
+    for (const r of await playGame(true)) {
+      if (r.deviceName === 'iPhone 13') {
+        assert.ok(r.ticks >= 1, 'iPhone gets at least one tick');
+        assert.strictEqual(r.buzzes.length, 0, 'iPhone never calls vibrate');
+      } else {
+        assert.deepStrictEqual(r.buzzes, [EXPECTED[r.role]], `${r.role} pattern`);
+      }
+    }
+    for (const r of await playGame(false)) {
+      assert.strictEqual(r.buzzes.length + r.ticks, 0, 'no haptics when the host turns them off');
+    }
+    console.log('part 4 (haptics) ok');
   }
 
   await browser.close();

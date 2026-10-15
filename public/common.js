@@ -31,20 +31,58 @@ window.Mafia = (() => {
     });
   }
 
-  // Swap the emoji for artwork if public/illustrations/<role>.png exists.
-  const art = {};
-  function illustration(el, role) {
+  // Artwork dropped into public/illustrations (the server lists what's there).
+  let artList = null;
+  function artFiles() {
+    if (!artList) artList = fetch('/api/art').then((r) => r.json()).then((d) => d.files || []).catch(() => []);
+    return artList;
+  }
+
+  // Swap the emoji for public/illustrations/<role>.png (or .webp/.gif/.svg/.jpg) if it exists.
+  async function illustration(el, role) {
     el.textContent = ROLES[role] ? ROLES[role].icon : '';
     el.classList.remove('has-art');
     el.style.backgroundImage = '';
-    if (art[role] === false) return;
-    const src = `/illustrations/${role}.png`;
-    const apply = () => { el.style.backgroundImage = `url(${src})`; el.classList.add('has-art'); };
-    if (art[role]) return apply();
-    const img = new Image();
-    img.onload = () => { art[role] = true; apply(); };
-    img.onerror = () => { art[role] = false; };
-    img.src = src;
+    const files = await artFiles();
+    const file = ['png', 'webp', 'gif', 'svg', 'jpg', 'jpeg'].map((x) => `${role}.${x}`).find((f) => files.includes(f));
+    if (!file) return;
+    el.style.backgroundImage = `url(/illustrations/${file})`;
+    el.classList.add('has-art');
+  }
+
+  // ---- Haptics when a player peeks at their role ----
+  // EDIT HERE to design the feel of each role. Numbers are milliseconds:
+  // buzz, pause, buzz, pause... (Android phones; iPhones only get TICKS below).
+  // Placeholder rhythms: Mafia a heavy heartbeat, Doctor a light flutter, Villager one calm pulse.
+  // Tip: keep every pattern the same total length with the same amount of buzzing,
+  // or people nearby can hear who's who. The browser test warns if they differ.
+  const PATTERNS = {
+    mafia: [110, 80, 130, 380],
+    doctor: [60, 60, 60, 60, 60, 60, 60, 280],
+    villager: [240, 460],
+  };
+  // iPhones can't vibrate from a web page. Recent iOS Safari plays a light system
+  // tick when a switch control is toggled, which is the closest thing available.
+  const TICKS = { mafia: [0, 190], doctor: [0, 110, 220, 330], villager: [0] };
+  const isIOS = /iP(hone|ad|od)/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+  function iosTick() {
+    const label = document.createElement('label');
+    label.setAttribute('aria-hidden', 'true');
+    label.style.display = 'none';
+    const input = document.createElement('input');
+    input.type = 'checkbox';
+    input.setAttribute('switch', '');
+    label.appendChild(input);
+    document.body.appendChild(label);
+    label.click();
+    label.remove();
+  }
+  function haptic(role) {
+    if (!PATTERNS[role]) return;
+    try {
+      if (typeof navigator.vibrate === 'function' && !isIOS) { navigator.vibrate(PATTERNS[role]); return; }
+      if (isIOS) for (const t of TICKS[role]) (t === 0 ? iosTick() : setTimeout(iosTick, t));
+    } catch { /* haptics are a bonus, never an error */ }
   }
 
   // ---- Letters to the editor (feedback), shared by host and player pages ----
@@ -118,5 +156,5 @@ window.Mafia = (() => {
     ].filter(Boolean).join('\n');
   }
 
-  return { esc, ROLES, masthead, wireSteppers, illustration, letterForm, wireLetterForm, letterText };
+  return { esc, ROLES, masthead, wireSteppers, artFiles, illustration, haptic, PATTERNS, letterForm, wireLetterForm, letterText };
 })();

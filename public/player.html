@@ -145,6 +145,7 @@
     if (revealed === on || !view || !view.seat) return;
     revealed = on;
     $('card').classList.toggle('pressing', on);
+    if (on && view.haptics !== false) Mafia.haptic(view.seat.role);
     renderCard();
   }
   const card = $('card');

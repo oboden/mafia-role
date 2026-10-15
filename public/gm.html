@@ -118,6 +118,7 @@
           </div>
           <label class="check"><input id="seeEachOther" type="checkbox"> Mafia can see who the other Mafia are</label>
           <label class="check"><input id="revealOnDeath" type="checkbox"> Reveal a player’s role when they’re out</label>
+          <label class="check"><input id="haptics" type="checkbox"> Phones buzz when players peek at their role</label>
           <div class="error" id="dealError" role="alert"></div>
           <button id="redeal" type="button" class="secondary block" data-action="redeal">Deal a new round</button>
         </div>
@@ -134,6 +135,7 @@
     $('doctors').value = state.doctors;
     $('seeEachOther').checked = state.mafiaSeeEachOther;
     $('revealOnDeath').checked = state.revealOnDeath;
+    $('haptics').checked = state.haptics !== false;
   }
 
   function updateLobby() {
@@ -502,6 +504,7 @@
         state = await post('deal', {
           players: $('players').value, mafia: $('mafia').value, doctors: $('doctors').value,
           mafiaSeeEachOther: $('seeEachOther').checked, revealOnDeath: $('revealOnDeath').checked,
+          haptics: $('haptics').checked,
         });
         showRoles = false;
         render();
@@ -528,7 +531,7 @@
     if (a === 'again') {
       if (!confirm('Deal a new round with the same numbers? Everyone scans again for a new role.')) return;
       letterSent = false;
-      return act('deal', { players: state.players, mafia: state.mafia, doctors: state.doctors, mafiaSeeEachOther: state.mafiaSeeEachOther, revealOnDeath: state.revealOnDeath });
+      return act('deal', { players: state.players, mafia: state.mafia, doctors: state.doctors, mafiaSeeEachOther: state.mafiaSeeEachOther, revealOnDeath: state.revealOnDeath, haptics: state.haptics });
     }
     if (a === 'copy-letters') {
       const text = state.feedback.map(letterText).join('\n\n');
@@ -569,7 +572,7 @@
       app.innerHTML = `${masthead('No. 00', 'Stop the presses')}
         <section class="stack" id="denied">
           <h1 class="display-l">${res.status === 404 ? 'Game not found' : 'This isn’t your host link'}</h1>
-          <p class="deck">Open the game from the device that created it, or <a href="/">start a new game</a>.</p>
+          <p class="deck">Open the game from the device that created it, or <a href="/new">start a new game</a>.</p>
         </section>`;
       return;
     }

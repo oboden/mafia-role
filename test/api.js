@@ -141,6 +141,17 @@ const token = (i) => `player-token-${String(i).padStart(8, '0')}`;
     console.log('game 2 (mafia wins, undo from game over) ok');
   }
 
+  // ---- Haptics setting reaches phones ----
+  {
+    const on = (await call('POST', '/api/rooms', { players: 4, mafia: 1, doctors: 1 })).data;
+    const off = (await call('POST', '/api/rooms', { players: 4, mafia: 1, doctors: 1, haptics: false })).data;
+    assert.strictEqual((await call('GET', `/api/rooms/${on.code}/me?token=${token(1)}`)).data.haptics, true, 'on by default');
+    assert.strictEqual((await call('GET', `/api/rooms/${off.code}/me?token=${token(1)}`)).data.haptics, false);
+    const art = await call('GET', '/api/art');
+    assert.ok(Array.isArray(art.data.files));
+    console.log('haptics setting ok');
+  }
+
   // ---- Starting rules ----
   {
     const { data } = await call('POST', '/api/rooms', { players: 8, mafia: 2, doctors: 1 });
