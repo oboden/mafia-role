@@ -65,8 +65,7 @@ const tap = (gm, text) => gm.getByRole('button', { name: text, exact: true }).cl
   {
     const page = await (await phoneCtx(browser)).newPage();
     await page.goto(BASE);
-    await page.waitForSelector('svg.scene');
-    await page.waitForTimeout(600);
+    await page.waitForSelector('#art .slot');
     await shot(page, '00a-cover');
     // Joining with a bad code explains itself.
     await page.fill('#code', 'ZZZZ');
@@ -75,7 +74,17 @@ const tap = (gm, text) => gm.getByRole('button', { name: text, exact: true }).cl
     await page.click('#startBtn');
     await page.waitForURL(/\/new$/);
     await page.waitForSelector('#setup');
-    console.log('part 0 (front page) ok');
+    // Setup starts from zero and won't deal until the numbers make a game.
+    for (const id of ['players', 'mafia', 'doctors']) assert.strictEqual(await page.inputValue(`#${id}`), '0');
+    assert.ok(await page.isDisabled('#dealBtn'));
+    await page.click('.stepper:has(#players) [data-step="1"]');
+    await page.click('.stepper:has(#players) [data-step="1"]');
+    assert.match(await page.textContent('#error'), /at least 3/);
+    await page.click('.stepper:has(#players) [data-step="1"]');
+    assert.match(await page.textContent('#error'), /at least 1 Mafia/);
+    await page.click('.stepper:has(#mafia) [data-step="1"]');
+    assert.ok(!(await page.isDisabled('#dealBtn')), '3 players, 1 Mafia is a game');
+    console.log('part 0 (front page, zeroed setup) ok');
   }
 
   // ===== Part 1: dealing, joining, removing, new rounds (the original features) =====
@@ -309,28 +318,21 @@ const tap = (gm, text) => gm.getByRole('button', { name: text, exact: true }).cl
     console.log('part 3 (mafia win) ok');
   }
 
-  // ===== Part 4: haptics on reveal =====
+  // ===== Part 4: the reveal: delay, glow, vibration and sound =====
   {
-    // Read whatever patterns are defined in public/common.js.
-    const probe = await (await phoneCtx(browser)).newPage();
-    await probe.goto(BASE);
-    const EXPECTED = await probe.evaluate(() => Mafia.PATTERNS);
-    const sum = (a) => a.reduce((x, y) => x + y, 0);
-    const buzz = (a) => a.filter((_, i) => i % 2 === 0).reduce((x, y) => x + y, 0);
-    const totals = new Set(Object.values(EXPECTED).map(sum));
-    const buzzing = new Set(Object.values(EXPECTED).map(buzz));
-    if (totals.size > 1 || buzzing.size > 1) {
-      console.warn('WARNING: role haptics differ in length or amount of buzzing. Players nearby may be able to hear who is Mafia.');
-    }
-    // Spy on vibrations (Android) and switch toggles (iPhone).
+    // Spy on vibrations and on sounds started through Web Audio.
     const spy = () => {
       window.__buzz = [];
-      window.__ticks = 0;
+      window.__sounds = 0;
       navigator.vibrate = (p) => { window.__buzz.push(p); return true; };
-      document.addEventListener('click', (e) => { if (e.target.matches?.('input[switch]')) window.__ticks += 1; }, true);
+      const Ctx = window.AudioContext;
+      if (Ctx) {
+        const start = AudioScheduledSourceNode.prototype.start;
+        AudioScheduledSourceNode.prototype.start = function (...a) { window.__sounds += 1; return start.apply(this, a); };
+      }
     };
-    async function playGame(haptics) {
-      const r = await fetch(`${BASE}/api/rooms`, { method: 'POST', body: JSON.stringify({ players: 4, mafia: 1, doctors: 1, haptics }) }).then((x) => x.json());
+    async function playGame(opts) {
+      const r = await fetch(`${BASE}/api/rooms`, { method: 'POST', body: JSON.stringify({ players: 4, mafia: 1, doctors: 1, ...opts }) }).then((x) => x.json());
       const results = [];
       for (const [i, deviceName] of ['Pixel 7', 'Pixel 7', 'Pixel 7', 'iPhone 13'].entries()) {
         const ctx = await browser.newContext({ ...devices[deviceName] });
@@ -340,27 +342,63 @@ const tap = (gm, text) => gm.getByRole('button', { name: text, exact: true }).cl
         await page.fill('#name', `P${i}`);
         await page.click('#joinBtn');
         await page.waitForSelector('#role:not([hidden])');
+        const PATTERNS = await page.evaluate(() => window.Mafia.PATTERNS);
+        const buildUp = await page.evaluate(() => window.Mafia.buildUpPattern(1200));
+
+        // Letting go early keeps the role hidden and stops the buzzing.
+        await page.evaluate(() => { window.__buzz = []; });
+        await page.locator('#card').dispatchEvent('pointerdown', { pointerId: 1 });
+        await page.waitForTimeout(400);
+        assert.ok(await page.evaluate(() => document.querySelector('#card').classList.contains('charging')), 'card charges while held');
+        await page.locator('#card').dispatchEvent('pointerup', { pointerId: 1 });
+        await page.waitForTimeout(1100);
+        assert.ok(await page.isHidden('#cardShown'), 'early release keeps the role hidden');
+        const early = await page.evaluate(() => window.__buzz);
+
+        // A full hold reveals after the delay.
+        await page.evaluate(() => { window.__buzz = []; window.__sounds = 0; });
+        const t0 = Date.now();
         const role = await peekRole(page);
-        await page.waitForTimeout(450);
-        const buzzes = await page.evaluate(() => window.__buzz);
-        const ticks = await page.evaluate(() => window.__ticks);
+        const waited = Date.now() - t0;
+        await page.waitForTimeout(700);
+        const full = await page.evaluate(() => window.__buzz);
+        const sounds = await page.evaluate(() => window.__sounds);
+        const glowClass = await page.evaluate(() => [...document.querySelector('#card').classList].find((c) => c.startsWith('glow-')) || '');
+        if (i === 0 && opts.glow !== false) await shot(page, '40-phone-reveal-glow');
         await letGo(page);
-        results.push({ deviceName, role, buzzes, ticks });
+        results.push({ deviceName, role, early, full, sounds, glowClass, waited, PATTERNS, buildUp });
       }
       return results;
     }
-    for (const r of await playGame(true)) {
+
+    // Everything on.
+    for (const r of await playGame({})) {
+      assert.ok(r.waited >= 1000, `reveal waits for the hold (${r.waited} ms)`);
+      assert.strictEqual(r.glowClass, `glow-${r.role}`, 'role glow behind the card');
+      assert.ok(r.sounds >= 2, 'build-up and reveal sounds both play');
       if (r.deviceName === 'iPhone 13') {
-        assert.ok(r.ticks >= 1, 'iPhone gets at least one tick');
-        assert.strictEqual(r.buzzes.length, 0, 'iPhone never calls vibrate');
+        assert.strictEqual(r.full.length + r.early.length, 0, 'iPhone never calls vibrate');
       } else {
-        assert.deepStrictEqual(r.buzzes, [EXPECTED[r.role]], `${r.role} pattern`);
+        assert.deepStrictEqual(r.early, [r.buildUp, 0], 'build-up starts, then stops on early release');
+        assert.deepStrictEqual(r.full, [r.buildUp, r.PATTERNS[r.role]], `${r.role}: build-up then role pattern`);
       }
     }
-    for (const r of await playGame(false)) {
-      assert.strictEqual(r.buzzes.length + r.ticks, 0, 'no haptics when the host turns them off');
+    const { PATTERNS } = (await playGame({}))[0];
+    const total = (a) => a.reduce((x, y) => x + y, 0);
+    const buzz = (a) => a.filter((_, i) => i % 2 === 0).reduce((x, y) => x + y, 0);
+    const lengths = new Set(Object.values(PATTERNS).map(total));
+    const amounts = new Set(Object.values(PATTERNS).map(buzz));
+    if (lengths.size > 1 || amounts.size > 1) {
+      console.warn('WARNING: role vibration patterns differ in length or amount of buzzing; people nearby may hear who is who.');
     }
-    console.log('part 4 (haptics) ok');
+
+    // Everything off.
+    for (const r of await playGame({ haptics: false, glow: false, sound: false })) {
+      assert.strictEqual(r.full.length + r.early.length, 0, 'no vibration when off');
+      assert.strictEqual(r.sounds, 0, 'no sound when off');
+      assert.strictEqual(r.glowClass, '', 'no role glow when off');
+    }
+    console.log('part 4 (reveal: delay, glow, vibration, sound) ok');
   }
 
   await browser.close();

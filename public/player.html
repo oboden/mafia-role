@@ -59,7 +59,7 @@
         <p class="stamp center">Classified</p>
         <p class="title">Your role is inside</p>
         <div class="hold" aria-hidden="true">Hold</div>
-        <p class="hint">Press and hold to peek. Tilt the phone towards you first. The person next to you is watching.</p>
+        <p class="hint">Press and hold until the ring closes. Tilt the phone towards you first. The person next to you is watching.</p>
       </div>
       <div class="stack" id="cardShown" hidden style="align-items:center" aria-live="polite">
         <p class="stamp center">For your eyes only</p>
@@ -123,12 +123,25 @@
   function mast(left, right) { $('mast').innerHTML = masthead(left, right); }
 
   // ---------- role card: press and hold ----------
+  // Holding fills a ring for HOLD_MS while the card trembles and (on Android)
+  // the phone buzzes faster and faster. Then the card opens with the role's glow
+  // and the role's own buzz. Letting go at any point hides it again.
+  const HOLD_MS = 1200;
+  const card = $('card');
+  let holding = false;
+  let holdStart = 0;
+  let holdTimer = null;
+  let frame = null;
+
   function renderCard() {
     const seat = view.seat;
     const r = ROLES[seat.role];
     $('cardHidden').hidden = revealed;
     $('cardShown').hidden = !revealed;
-    $('card').classList.toggle('revealed', revealed);
+    card.classList.toggle('revealed', revealed);
+    for (const role of ['mafia', 'doctor', 'villager']) {
+      card.classList.toggle(`glow-${role}`, revealed && view.glow !== false && seat.role === role);
+    }
     $('roleName').textContent = r.name;
     $('roleDesc').textContent = r.desc;
     Mafia.illustration($('illus'), seat.role);
@@ -141,24 +154,78 @@
     }
   }
 
-  function setRevealed(on) {
-    if (revealed === on || !view || !view.seat) return;
-    revealed = on;
-    $('card').classList.toggle('pressing', on);
-    if (on && view.haptics !== false) Mafia.haptic(view.seat.role);
+  const buzzOn = () => view && view.haptics !== false;
+  const soundOn = () => view && view.sound !== false;
+  let buildSound = null;   // the build-up sound that's playing
+  let holdId = 0;          // ignores a build-up sound that loads after the player let go
+
+  // Phones only allow sound after a tap, so unlock audio on any touch of the page.
+  for (const ev of ['pointerdown', 'touchend', 'click']) {
+    document.addEventListener(ev, () => {
+      Mafia.sound.unlock();
+      if (view && view.seat && soundOn()) Mafia.sound.preload();
+    }, { passive: true, capture: true });
+  }
+
+  function tick(now) {
+    const p = Math.min(1, (now - holdStart) / HOLD_MS);
+    card.style.setProperty('--p', p.toFixed(3));
+    if (holding && !revealed) frame = requestAnimationFrame(tick);
+  }
+
+  function startHold() {
+    if (holding || !view || !view.seat) return;
+    holding = true;
+    holdStart = performance.now();
+    card.classList.add('charging');
+    if (buzzOn()) Mafia.haptics.buildUp(HOLD_MS);
+    if (soundOn()) {
+      const id = ++holdId;
+      Mafia.sound.buildUp(HOLD_MS).then((h) => {
+        if (id === holdId && holding && !revealed) buildSound = h; else Mafia.sound.stop(h);
+      });
+    }
+    frame = requestAnimationFrame(tick);
+    holdTimer = setTimeout(reveal, HOLD_MS);
+  }
+
+  function reveal() {
+    if (!holding) return;
+    revealed = true;
+    cancelAnimationFrame(frame);
+    card.classList.remove('charging');
+    card.style.setProperty('--p', '0');
+    if (buzzOn()) Mafia.haptics.reveal(view.seat.role);
+    Mafia.sound.stop(buildSound); buildSound = null;
+    if (soundOn()) Mafia.sound.reveal();
     renderCard();
   }
-  const card = $('card');
+
+  function endHold() {
+    if (!holding) return;
+    holding = false;
+    clearTimeout(holdTimer);
+    cancelAnimationFrame(frame);
+    card.classList.remove('charging');
+    card.style.setProperty('--p', '0');
+    if (!revealed && buzzOn()) Mafia.haptics.stop();
+    holdId++;
+    Mafia.sound.stop(buildSound); buildSound = null;
+    revealed = false;
+    if (view && view.seat) renderCard();
+  }
+
   card.addEventListener('pointerdown', (e) => {
     e.preventDefault();
     try { card.setPointerCapture(e.pointerId); } catch { /* some browsers refuse; release still hides it */ }
-    setRevealed(true);
+    startHold();
   });
-  for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) card.addEventListener(ev, () => setRevealed(false));
+  for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) card.addEventListener(ev, endHold);
+  card.addEventListener('touchstart', () => Mafia.haptics.touchStart(), { passive: true });
   card.addEventListener('contextmenu', (e) => e.preventDefault());
-  card.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setRevealed(true); } });
-  card.addEventListener('keyup', (e) => { if (e.key === ' ' || e.key === 'Enter') setRevealed(false); });
-  document.addEventListener('visibilitychange', () => { if (document.hidden) setRevealed(false); });
+  card.addEventListener('keydown', (e) => { if ((e.key === ' ' || e.key === 'Enter') && !e.repeat) { e.preventDefault(); startHold(); } });
+  card.addEventListener('keyup', (e) => { if (e.key === ' ' || e.key === 'Enter') endHold(); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) endHold(); });
 
   // ---------- screens ----------
   function renderRole() {

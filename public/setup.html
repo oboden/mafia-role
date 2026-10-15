@@ -22,19 +22,19 @@
       <div class="stepper">
         <div class="text"><p class="heading"><label for="players">Players</label></p><p class="hint">3 to 40 people</p></div>
         <button type="button" data-step="-1" aria-label="Fewer players">−</button>
-        <input id="players" type="number" inputmode="numeric" min="3" max="40" value="8">
+        <input id="players" type="number" inputmode="numeric" min="0" max="40" value="0">
         <button type="button" data-step="1" aria-label="More players">+</button>
       </div>
       <div class="stepper">
         <div class="text"><p class="heading"><label for="mafia">Mafia</label></p><p class="hint">Fewer than everyone else</p></div>
         <button type="button" data-step="-1" aria-label="Fewer Mafia">−</button>
-        <input id="mafia" type="number" inputmode="numeric" min="1" max="19" value="2">
+        <input id="mafia" type="number" inputmode="numeric" min="0" max="19" value="0">
         <button type="button" data-step="1" aria-label="More Mafia">+</button>
       </div>
       <div class="stepper">
         <div class="text"><p class="heading"><label for="doctors">Doctors</label></p><p class="hint">0 is fine</p></div>
         <button type="button" data-step="-1" aria-label="Fewer Doctors">−</button>
-        <input id="doctors" type="number" inputmode="numeric" min="0" max="10" value="1">
+        <input id="doctors" type="number" inputmode="numeric" min="0" max="10" value="0">
         <button type="button" data-step="1" aria-label="More Doctors">+</button>
       </div>
     </div>
@@ -43,14 +43,16 @@
       <label class="check"><input id="seeEachOther" type="checkbox" checked> Mafia can see who the other Mafia are</label>
       <label class="check"><input id="revealOnDeath" type="checkbox" checked> Reveal a player’s role when they’re out</label>
       <label class="check"><input id="haptics" type="checkbox" checked> Phones buzz when players peek at their role</label>
+      <label class="check"><input id="glow" type="checkbox" checked> Each role glows its own colour when revealed</label>
+      <label class="check"><input id="sound" type="checkbox" checked> Sound when players peek at their role</label>
     </div>
 
-    <p class="chips"><span class="deck">That leaves</span> <span class="chip accent" id="villagerChip"><span id="villagers">5</span>&nbsp;villagers</span></p>
+    <p class="chips"><span class="deck">That leaves</span> <span class="chip accent" id="villagerChip"><span id="villagers">0</span>&nbsp;villagers</span></p>
 
     <div class="grow"></div>
     <div class="stack">
       <div class="error" id="error" role="alert"></div>
-      <button class="block" type="submit">Deal the roles</button>
+      <button class="block" type="submit" id="dealBtn" disabled>Deal the roles</button>
     </div>
   </form>
 </main>
@@ -58,18 +60,30 @@
 <script>
   const $ = (id) => document.getElementById(id);
   $('mast').innerHTML = Mafia.masthead('No. 01', 'New game');
-  let mafiaTouched = false;
+  const n = (id) => parseInt($(id).value, 10) || 0;
+
+  // Same rules as the server, so the host sees what's missing before tapping.
+  function problem(p, m, d) {
+    if (p === 0) return 'Start by adding players.';
+    if (p < 3) return 'You need at least 3 players.';
+    if (p > 40) return '40 players is the most a game can take.';
+    if (m < 1) return 'Add at least 1 Mafia.';
+    if (m >= p - m) return 'Mafia must be fewer than everyone else, or they win at once.';
+    if (m + d >= p) return 'Leave room for at least 1 Villager.';
+    return '';
+  }
 
   function update() {
-    const p = parseInt($('players').value, 10) || 0;
-    if (!mafiaTouched) $('mafia').value = Math.max(1, Math.floor(p / 4));
-    const v = p - (parseInt($('mafia').value, 10) || 0) - (parseInt($('doctors').value, 10) || 0);
+    const p = n('players'), m = n('mafia'), d = n('doctors');
+    const v = Math.max(0, p - m - d);
     $('villagers').textContent = v;
-    $('villagerChip').lastChild.textContent = v === 1 ? ' villager' : ' villagers';
+    $('villagerChip').lastChild.textContent = v === 1 ? '\u00a0villager' : '\u00a0villagers';
+    const msg = problem(p, m, d);
+    $('error').textContent = msg;
+    $('error').classList.toggle('muted', p === 0);
+    $('dealBtn').disabled = Boolean(msg);
   }
-  $('players').addEventListener('input', update);
-  $('mafia').addEventListener('input', () => { mafiaTouched = true; update(); });
-  $('doctors').addEventListener('input', update);
+  for (const id of ['players', 'mafia', 'doctors']) $(id).addEventListener('input', update);
   Mafia.wireSteppers($('setup'));
   update();
 
@@ -86,6 +100,8 @@
         mafiaSeeEachOther: $('seeEachOther').checked,
         revealOnDeath: $('revealOnDeath').checked,
         haptics: $('haptics').checked,
+        glow: $('glow').checked,
+        sound: $('sound').checked,
       }),
     });
     const data = await res.json();

@@ -81,6 +81,8 @@ function parseSetup(body) {
     mafiaSeeEachOther: body.mafiaSeeEachOther !== false,
     revealOnDeath: body.revealOnDeath !== false,
     haptics: body.haptics !== false,
+    glow: body.glow !== false,
+    sound: body.sound !== false,
   };
 }
 
@@ -133,6 +135,8 @@ function normalise(room) {
   room.feedback = room.feedback || [];
   if (room.revealOnDeath === undefined) room.revealOnDeath = true;
   if (room.haptics === undefined) room.haptics = true;
+  if (room.glow === undefined) room.glow = true;
+  if (room.sound === undefined) room.sound = true;
   return room;
 }
 
@@ -195,6 +199,8 @@ function gmView(room) {
     mafiaSeeEachOther: room.mafiaSeeEachOther,
     revealOnDeath: room.revealOnDeath,
     haptics: room.haptics,
+    glow: room.glow,
+    sound: room.sound,
     phase: room.phase,
     night: room.night,
     report: room.report,
@@ -217,6 +223,8 @@ function playerView(room, token) {
     night: room.night,
     winner: room.winner,
     haptics: room.haptics !== false,
+    glow: room.glow !== false,
+    sound: room.sound !== false,
     seat: null,
     feedbackSent: room.feedback.some((f) => f.token === token && f.round === room.round),
   };
@@ -422,6 +430,10 @@ const MIME = {
   '.gif': 'image/gif',
   '.mp4': 'video/mp4',
   '.webm': 'video/webm',
+  '.mp3': 'audio/mpeg',
+  '.m4a': 'audio/mp4',
+  '.ogg': 'audio/ogg',
+  '.wav': 'audio/wav',
   '.txt': 'text/plain; charset=utf-8',
 };
 
@@ -476,6 +488,15 @@ async function handle(req, res) {
     let files = [];
     try {
       files = fs.readdirSync(path.join(PUBLIC_DIR, 'illustrations')).filter((f) => /\.(png|jpe?g|webp|gif|mp4|webm|svg)$/i.test(f));
+    } catch { /* no folder yet */ }
+    return json(res, 200, { files });
+  }
+
+  // Which sound files have been dropped into public/sounds.
+  if (method === 'GET' && url.pathname === '/api/sounds') {
+    let files = [];
+    try {
+      files = fs.readdirSync(path.join(PUBLIC_DIR, 'sounds')).filter((f) => /\.(mp3|m4a|ogg|wav)$/i.test(f));
     } catch { /* no folder yet */ }
     return json(res, 200, { files });
   }

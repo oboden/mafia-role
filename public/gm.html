@@ -119,6 +119,8 @@
           <label class="check"><input id="seeEachOther" type="checkbox"> Mafia can see who the other Mafia are</label>
           <label class="check"><input id="revealOnDeath" type="checkbox"> Reveal a player’s role when they’re out</label>
           <label class="check"><input id="haptics" type="checkbox"> Phones buzz when players peek at their role</label>
+          <label class="check"><input id="glow" type="checkbox"> Each role glows its own colour when revealed</label>
+          <label class="check"><input id="sound" type="checkbox"> Sound when players peek at their role</label>
           <div class="error" id="dealError" role="alert"></div>
           <button id="redeal" type="button" class="secondary block" data-action="redeal">Deal a new round</button>
         </div>
@@ -136,6 +138,8 @@
     $('seeEachOther').checked = state.mafiaSeeEachOther;
     $('revealOnDeath').checked = state.revealOnDeath;
     $('haptics').checked = state.haptics !== false;
+    $('glow').checked = state.glow !== false;
+    $('sound').checked = state.sound !== false;
   }
 
   function updateLobby() {
@@ -504,7 +508,7 @@
         state = await post('deal', {
           players: $('players').value, mafia: $('mafia').value, doctors: $('doctors').value,
           mafiaSeeEachOther: $('seeEachOther').checked, revealOnDeath: $('revealOnDeath').checked,
-          haptics: $('haptics').checked,
+          haptics: $('haptics').checked, glow: $('glow').checked, sound: $('sound').checked,
         });
         showRoles = false;
         render();
@@ -531,7 +535,7 @@
     if (a === 'again') {
       if (!confirm('Deal a new round with the same numbers? Everyone scans again for a new role.')) return;
       letterSent = false;
-      return act('deal', { players: state.players, mafia: state.mafia, doctors: state.doctors, mafiaSeeEachOther: state.mafiaSeeEachOther, revealOnDeath: state.revealOnDeath, haptics: state.haptics });
+      return act('deal', { players: state.players, mafia: state.mafia, doctors: state.doctors, mafiaSeeEachOther: state.mafiaSeeEachOther, revealOnDeath: state.revealOnDeath, haptics: state.haptics, glow: state.glow, sound: state.sound });
     }
     if (a === 'copy-letters') {
       const text = state.feedback.map(letterText).join('\n\n');

@@ -167,6 +167,7 @@ input[type="text"]:focus, textarea:focus { outline: none; border-width: 2.5px; b
 input::placeholder, textarea::placeholder { color: var(--text-2); }
 .hint { font-size: .9rem; color: var(--text-2); }
 .error { color: var(--text-accent); font-weight: 500; min-height: 1.3em; font-size: .92rem; }
+.error.muted { color: var(--text-2); }
 
 .check { display: flex; gap: 12px; align-items: center; font-weight: 500; cursor: pointer; }
 .check input {
@@ -299,7 +300,12 @@ body.night .pick[aria-pressed="true"] { box-shadow: 3px 3px 0 var(--paper-100); 
 .letter dd { margin: 0 0 4px; font: italic 400 1rem/1.4 var(--display); }
 
 /* ---------- role card (always night colours) ---------- */
+/* Press and hold: a ring fills, the card trembles harder and a neutral glow grows
+   (identical for every role). When the ring completes the card opens with the
+   role's glow behind it. --p goes 0 → 1 during the hold (set from JS). */
 .card {
+  --p: 0;
+  --glow: 244, 239, 228;          /* neutral paper glow while charging */
   position: relative;
   border-radius: var(--r-lg);
   padding: 28px 22px;
@@ -313,30 +319,64 @@ body.night .pick[aria-pressed="true"] { box-shadow: 3px 3px 0 var(--paper-100); 
   user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
   touch-action: none;
   cursor: pointer;
+  transition: box-shadow .35s ease, border-color .35s ease;
 }
+.card.charging {
+  box-shadow:
+    calc(6px - var(--p) * 6px) calc(6px - var(--p) * 6px) 0 var(--red-500),
+    0 0 calc(var(--p) * 44px) calc(var(--p) * 2px) rgba(var(--glow), calc(var(--p) * .22));
+  animation: tremble .09s linear infinite;
+  transition: none;
+}
+@keyframes tremble {
+  0%   { transform: translate(0, 0) rotate(0); }
+  25%  { transform: translate(calc(var(--p) * 2.2px), calc(var(--p) * -1.4px)) rotate(calc(var(--p) * .5deg)); }
+  50%  { transform: translate(calc(var(--p) * -1.8px), calc(var(--p) * 1.6px)) rotate(calc(var(--p) * -.4deg)); }
+  75%  { transform: translate(calc(var(--p) * 1.4px), calc(var(--p) * 2px)) rotate(calc(var(--p) * .3deg)); }
+  100% { transform: translate(0, 0) rotate(0); }
+}
+/* Once open: a soft halo behind the card. Subtle on purpose: it should be felt
+   by the person holding the phone, not read from across the table. */
+.card.revealed { animation: open .35s cubic-bezier(.2, 1.4, .4, 1); box-shadow: 0 0 48px 2px rgba(var(--glow), .26); }
+@keyframes open { from { transform: scale(.97); } to { transform: scale(1); } }
+/* Role glows (the host can switch these off; then every role gets the neutral halo). */
+.card.revealed.glow-mafia    { --glow: 229, 67, 43; }    /* blood red */
+.card.revealed.glow-doctor   { --glow: 92, 196, 150; }   /* soft green */
+.card.revealed.glow-villager { --glow: 240, 186, 84; }   /* lamplight */
+@media (prefers-reduced-motion: reduce) { .card.charging, .card.revealed { animation: none; } }
+
 .card .stamp { align-self: center; color: var(--red-500); }
 .card .title { font: 900 2rem/1.04 var(--display); margin: 0; }
 .card .hold {
+  position: relative;
   width: 120px; height: 120px; border-radius: 50%;
-  border: 3px dashed var(--red-500); background: var(--red-900);
+  background: var(--red-900);
   display: grid; place-items: center; font-weight: 700;
-  transition: transform .15s ease;
+  transform: scale(calc(1 + var(--p) * .08));
 }
-.card.pressing .hold { transform: scale(.94); }
+.card .hold::before {            /* faint full track */
+  content: ''; position: absolute; inset: -2px; border-radius: 50%;
+  border: 3px dashed var(--red-500); opacity: calc(1 - var(--p));
+}
+.card .hold::after {             /* the ring that fills while holding */
+  content: ''; position: absolute; inset: -8px; border-radius: 50%;
+  background: conic-gradient(var(--paper-100) calc(var(--p) * 1turn), transparent 0);
+  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
+          mask: radial-gradient(farthest-side, transparent calc(100% - 5px), #000 calc(100% - 4px));
+}
 .card .hint { color: var(--ink-400); font: italic 400 1rem/1.45 var(--display); }
 .card .you-are { font: 700 .75rem/1 var(--body); letter-spacing: .14em; text-transform: uppercase; color: var(--ink-400); }
 .card .role-name { font: 900 3rem/1 var(--display); letter-spacing: -0.02em; margin: 0; }
 .card .desc { font: italic 400 1.02rem/1.45 var(--display); color: var(--ink-400); }
 .card .partners { border-top: 1.5px solid var(--ink-700); padding-top: 12px; width: 100%; color: var(--red-500); font-weight: 500; }
 .card .partners s { color: var(--ink-400); }
-/* Illustration slot: drop artwork in public/illustrations/<role>.png and it replaces the emoji. */
+/* Illustration slot: empty until public/illustrations/<role>.png is added. */
 .illus {
   width: 140px; height: 140px; border-radius: var(--r-md);
-  background: var(--ink-700) center / contain no-repeat;
-  display: grid; place-items: center;
-  font-size: 4rem; filter: grayscale(1) contrast(1.1);
+  border: 2px dashed var(--ink-700);
+  background: center / contain no-repeat;
 }
-.illus.has-art { font-size: 0; filter: none; }
+.illus.has-art { border: 0; }
 
 body.night .masthead .title, body.night .display-xl, body.night .display-l { color: var(--paper-100); }
 

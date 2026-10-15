@@ -43,22 +43,33 @@ arrives.
 
 ## Illustrations
 
-Drop artwork into `public/illustrations/` and it replaces the placeholders automatically:
+The front page and the role cards have empty, framed slots. Drop artwork into
+`public/illustrations/` and it fills them automatically:
 
 - **Front page:** `cover.mp4` or `cover.webm` (a short muted loop, so the photo moves),
-  or `cover.gif`, `.webp`, `.png`, `.jpg`. Portrait 4:5 fills the frame. A still image gets a
-  slow drift and film flicker so it still feels alive. Until then an animated stand-in shows.
+  or `cover.gif`, `.webp`, `.png`, `.jpg`. Portrait 4:5. A still image gets a slow drift and a
+  film flicker.
 - **Role cards:** `mafia.png`, `doctor.png`, `villager.png` (square; `.webp`, `.gif`, `.svg`,
   `.jpg` also work).
 
-## Haptics
+## The reveal
 
-When a player presses and holds their card, the phone buzzes in a rhythm for their role:
-Mafia a heavy heartbeat, Doctor a light flutter, Villager one calm pulse. Every pattern lasts
-the same 700 ms with the same 240 ms of buzzing, so neighbours hear much the same thing. The
-patterns live in `PATTERNS` in `public/common.js`. Android phones play them fully; iPhones
-can't vibrate from a web page, so recent iOS gets a best-effort light tick instead. The host can
-turn haptics off in setup.
+A player presses and holds their card. For 1.2 seconds a ring fills, the card trembles harder,
+a neutral glow grows, a build-up sound rises and (on Android) the phone buzzes faster and faster.
+Then the card opens with a soft halo behind it in the role's colour, a reveal sound, and the
+role's own vibration. Letting go at any point hides it again and stops everything.
+
+The host can switch off, per game: **vibration**, **role-coloured glow** (then every card gets
+the same neutral halo) and **sound**.
+
+- **Sound:** put `buildup.mp3` and `reveal.mp3` (or `.m4a`, `.ogg`, `.wav`) in `public/sounds/`.
+  Every role hears exactly the same two sounds. Until the files exist, quiet placeholder tones
+  play. This repo is public, so only add sounds whose licence allows sharing the file itself
+  (CC0 is safest: Kenney.nl, or Freesound filtered to CC0).
+- **Vibration:** the build-up pattern is the same for every role. The reveal patterns are in
+  `PATTERNS` in `public/common.js`; keep them the same total length and amount of buzzing or
+  neighbours can hear who's who (the browser test warns if they differ). iPhones can't vibrate
+  from a website at all, so on iPhone the sound and the on-screen build-up do that job.
 
 ## Play on your Wi-Fi (no hosting needed)
 
