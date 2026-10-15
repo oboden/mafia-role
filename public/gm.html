@@ -2,71 +2,549 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Game Master</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#f4efe4">
+  <title>The Mafia Daily · Host</title>
   <link rel="stylesheet" href="/style.css">
+  <script src="/common.js"></script>
 </head>
 <body>
-<main>
-  <div class="brand">Mafia · Game master</div>
-  <h1 id="title">Loading…</h1>
-  <div class="summary" id="summary"></div>
-
-  <div id="denied" class="panel" hidden>
-    <h2>This isn't your game master link</h2>
-    <p class="muted">Open the game from the device that created it, or <a href="/" style="color: var(--accent)">start a new game</a>.</p>
-  </div>
-
-  <div class="gm-grid" id="game" hidden>
-    <section class="panel qr-box" id="qrPanel">
-      <h2 id="qrHeading">Scan to get your role</h2>
-      <img id="qr" alt="QR code to join the game">
-      <p class="code" id="code"></p>
-      <p class="muted small join-url" id="joinUrl"></p>
-      <div class="notice" id="lanNotice" hidden></div>
-    </section>
-
-    <section class="panel">
-      <div class="toolbar">
-        <h2 style="margin: 0" id="countLabel"></h2>
-        <button class="secondary" id="toggleRoles" type="button">Show roles</button>
-      </div>
-      <div class="progress"><div id="bar"></div></div>
-      <table>
-        <thead><tr><th>#</th><th>Player</th><th>Role</th><th></th></tr></thead>
-        <tbody id="seats"></tbody>
-      </table>
-      <p class="empty" id="empty">Nobody has scanned yet.</p>
-
-      <details class="settings" style="margin-top: 20px">
-        <summary>New round or change numbers</summary>
-        <p class="muted small">Dealing again reshuffles every role and clears the list. Phones that are still open get a button to pick up their new role.</p>
-        <div class="row">
-          <div class="field"><label for="players">Players</label><input id="players" type="number" min="3" max="40"></div>
-          <div class="field"><label for="mafia">Mafia</label><input id="mafia" type="number" min="1"></div>
-          <div class="field"><label for="doctors">Doctors</label><input id="doctors" type="number" min="0"></div>
-        </div>
-        <div class="field"><label class="check"><input id="seeEachOther" type="checkbox"> Mafia can see who the other Mafia are</label></div>
-        <button id="redeal" type="button">Deal a new round</button>
-        <div class="error" id="dealError" role="alert"></div>
-      </details>
-    </section>
-  </div>
+<main id="app">
+  <p class="muted">Loading…</p>
 </main>
 
 <script>
+  const { esc, ROLES, masthead, letterForm, wireLetterForm, letterText } = Mafia;
+  const app = document.getElementById('app');
   const $ = (id) => document.getElementById(id);
   const code = location.pathname.split('/').pop().toUpperCase();
   const gmToken = location.hash.slice(1);
   const ROLE_LABEL = { mafia: 'Mafia', doctor: 'Doctor', villager: 'Villager' };
-  // Roles start hidden so players crowding round the QR code can't read them.
-  let showRoles = false;
-  let state = null;
+  const A = { mafia: 'a Mafia member', doctor: 'the Doctor', villager: 'a Villager' };
 
-  function esc(s) {
-    return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  let state = null;
+  let qr = { src: '', url: '', notice: '' };
+  let error = '';
+  let mountedKey = '';
+
+  // Local, host-only UI state
+  let showRoles = false;          // lobby
+  let night = { n: 0, step: 0, attackId: undefined, saveId: undefined }; // undefined = not chosen yet, null = nobody
+  let trialId = null;             // day
+  let timer = { total: 180, left: 180, running: false, endsAt: 0, tick: null };
+  let letterSent = false;
+
+  // ---------- helpers ----------
+  const alive = () => state.seats.filter((s) => s.alive);
+  const seat = (id) => state.seats.find((s) => s.id === id);
+  const num = (i) => String(i + 1).padStart(2, '0');
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  function pickFrom(list, n) {
+    // Same story for the same night, different across nights and games.
+    let h = n * 7;
+    for (const c of state.code) h = (h * 31 + c.charCodeAt(0)) % 9973;
+    return list[h % list.length];
+  }
+  function readAloud(script, label = 'Read aloud') {
+    return `<div class="read-aloud"><span class="label">${esc(label)}</span><blockquote>${esc(script)}</blockquote></div>`;
+  }
+  function undoButton() {
+    return state.canUndo ? `<button class="ghost" type="button" data-action="undo">Undo last step</button>` : '';
+  }
+  function errorLine() { return `<div class="error" role="alert" id="actionError">${esc(error)}</div>`; }
+
+  async function post(path, body = {}) {
+    const res = await fetch(`/api/rooms/${code}/${path}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-GM-Token': gmToken },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Something went wrong');
+    return data;
+  }
+  async function act(path, body) {
+    error = '';
+    try {
+      state = await post(path, body);
+    } catch (err) {
+      error = err.message;
+    }
+    render();
+    window.scrollTo({ top: 0 });
   }
 
+  // ---------- lobby ----------
+  function mountLobby() {
+    app.innerHTML = `
+      ${masthead(`No. ${String(state.round).padStart(2, '0')}`, `Game ${state.code}`)}
+      <section class="panel join-card" id="joinCard">
+        <h2 class="heading" id="qrHeading">Scan to get your role</h2>
+        <img id="qr" alt="QR code to join the game" src="${esc(qr.src)}">
+        <p class="deck">or open the link and type</p>
+        <p class="code" id="code">${esc(state.code)}</p>
+        <p class="url">${esc(qr.url)}</p>
+        <div class="notice" id="lanNotice" ${qr.notice ? '' : 'hidden'}>${esc(qr.notice)}</div>
+      </section>
+
+      <section class="stack">
+        <div class="list-head">
+          <h2 class="heading" id="countLabel"></h2>
+          <button class="ghost" id="toggleRoles" type="button" data-action="toggle-roles">Show roles</button>
+        </div>
+        <div class="progress"><div id="bar"></div></div>
+        <ul class="rows" id="seats"></ul>
+        <p class="empty" id="empty">Nobody has scanned yet. Hold the QR code up to the table.</p>
+      </section>
+
+      <section class="stack" id="startBox">
+        <p class="deck" id="startHint"></p>
+        ${errorLine()}
+        <button class="block" type="button" id="startBtn" data-action="start">Start the game</button>
+      </section>
+
+      <details class="settings">
+        <summary>New round or change numbers</summary>
+        <div class="stack-lg" id="dealForm">
+          <p class="deck">Dealing again reshuffles every role and clears the list. Open phones get a button for their new role.</p>
+          <div class="stack">
+            ${['players', 'mafia', 'doctors'].map((k) => `
+              <div class="stepper">
+                <div class="text"><p class="heading"><label for="${k}">${k[0].toUpperCase() + k.slice(1)}</label></p></div>
+                <button type="button" data-step="-1" aria-label="Fewer ${k}">−</button>
+                <input id="${k}" type="number" inputmode="numeric" min="${k === 'players' ? 3 : k === 'mafia' ? 1 : 0}" max="40">
+                <button type="button" data-step="1" aria-label="More ${k}">+</button>
+              </div>`).join('')}
+          </div>
+          <label class="check"><input id="seeEachOther" type="checkbox"> Mafia can see who the other Mafia are</label>
+          <label class="check"><input id="revealOnDeath" type="checkbox"> Reveal a player’s role when they’re out</label>
+          <div class="error" id="dealError" role="alert"></div>
+          <button id="redeal" type="button" class="secondary block" data-action="redeal">Deal a new round</button>
+        </div>
+      </details>`;
+    Mafia.wireSteppers($('dealForm'));
+    fillDealForm();
+  }
+
+  function fillDealForm() {
+    const editing = ['players', 'mafia', 'doctors'].some((k) => $(k) && $(k).matches(':focus'));
+    if (editing || !$('players')) return;
+    $('players').value = state.players;
+    $('mafia').value = state.mafia;
+    $('doctors').value = state.doctors;
+    $('seeEachOther').checked = state.mafiaSeeEachOther;
+    $('revealOnDeath').checked = state.revealOnDeath;
+  }
+
+  function updateLobby() {
+    const s = state;
+    const joined = s.seats.length;
+    const full = s.remaining === 0;
+    $('countLabel').textContent = full ? `All ${s.players} are in` : `${joined} of ${s.players} joined`;
+    $('bar').style.width = `${(joined / s.players) * 100}%`;
+    $('qrHeading').textContent = full ? 'Everyone’s in. Lights down.' : 'Scan to get your role';
+    $('qr').style.opacity = full ? 0.25 : 1;
+    $('empty').hidden = joined > 0;
+    $('toggleRoles').textContent = showRoles ? 'Hide roles' : 'Show roles';
+    $('toggleRoles').hidden = joined === 0;
+    $('seats').innerHTML = s.seats.map((seat, i) => `
+      <li>
+        <span class="num">${num(i)}</span>
+        <span class="name">${esc(seat.name)}</span>
+        <span class="role ${showRoles ? seat.role : 'hidden'}">${showRoles ? ROLE_LABEL[seat.role] : '•••'}</span>
+        <button class="danger-link" type="button" data-kick="${seat.id}" data-name="${esc(seat.name)}">Remove</button>
+      </li>`).join('');
+    const btn = $('startBtn');
+    btn.disabled = joined < 3;
+    btn.textContent = full || joined < 3 ? 'Start the game' : `Start with ${joined} players`;
+    $('startHint').textContent = joined < 3
+      ? 'You need at least 3 players to start.'
+      : full ? 'Everyone has a role. Start, then read the first line aloud.'
+        : `${plural(s.players - joined, 'seat is', 'seats are')} still empty. You can start without them.`;
+    $('actionError').textContent = error;
+    fillDealForm();
+  }
+
+  // ---------- night ----------
+  function nightSteps() { return state.doctors > 0 ? ['sleep', 'mafia', 'doctor', 'wake'] : ['sleep', 'mafia', 'wake']; }
+
+  function pickList(kind, chosen) {
+    const people = alive();
+    const roleOf = (s) => (kind === 'attack' && s.role === 'mafia') ? 'Mafia' : (kind === 'save' && s.role === 'doctor') ? 'Doctor' : '';
+    return `<div class="picks" role="group">
+      ${people.map((s) => `
+        <button type="button" class="pick" data-pick="${kind}" data-id="${s.id}" aria-pressed="${chosen === s.id}">
+          <span class="num">${num(state.seats.indexOf(s))}</span>
+          <span class="name">${esc(s.name)}</span>
+          ${roleOf(s) ? `<span class="meta">${roleOf(s)}</span>` : ''}
+          <span class="radio"></span>
+        </button>`).join('')}
+      <button type="button" class="pick nobody" data-pick="${kind}" data-id="none" aria-pressed="${chosen === null}">${kind === 'attack' ? 'They couldn’t agree. Nobody tonight.' : 'Nobody'}</button>
+    </div>`;
+  }
+
+  function renderNight() {
+    if (night.n !== state.night) night = { n: state.night, step: 0, attackId: undefined, saveId: undefined };
+    const steps = nightSteps();
+    const step = steps[Math.min(night.step, steps.length - 1)];
+    const dots = `<div class="step-dots" aria-label="Step ${night.step + 1} of ${steps.length}">${steps.map((_, i) => `<span class="${i <= night.step ? 'on' : ''}"></span>`).join('')}</div>`;
+    const back = night.step > 0 ? `<button class="ghost" type="button" data-action="night-back">Back</button>` : undoButton();
+    const doctorAlive = alive().some((s) => s.role === 'doctor');
+    let body = '';
+    if (step === 'sleep') {
+      body = `
+        <p class="stamp">Lights out</p>
+        <h1 class="display-xl">Night ${state.night} falls.</h1>
+        ${readAloud('Everyone, close your eyes. The town is asleep.')}
+        <p class="deck">Wait until every eye is shut. Keep this screen dim and close to you.</p>
+        <div class="grow"></div>
+        <div class="actions"><button type="button" data-action="night-next">Wake the Mafia</button>${back}</div>`;
+    } else if (step === 'mafia') {
+      body = `
+        <h1 class="display-l">The Mafia wake.</h1>
+        ${readAloud('Mafia, open your eyes. Silently point at someone to eliminate.')}
+        <p class="deck">Tap who they point at. The Mafia are marked so you can see they’re awake.</p>
+        ${pickList('attack', night.attackId)}
+        <div class="actions"><button type="button" data-action="night-next" ${night.attackId === undefined ? 'disabled' : ''}>Mafia, close your eyes</button>${back}</div>`;
+    } else if (step === 'doctor') {
+      body = `
+        <h1 class="display-l">The Doctor wakes.</h1>
+        ${readAloud('Doctor, open your eyes. Point at someone you want to save.')}
+        ${doctorAlive
+          ? `<p class="deck">Tap who they point at. They can save themselves.</p>${pickList('save', night.saveId)}`
+          : `<div class="notice">The Doctor is out. Read the line anyway and wait a few seconds, so nobody can tell.</div>`}
+        <div class="actions"><button type="button" data-action="night-next" ${doctorAlive && night.saveId === undefined ? 'disabled' : ''}>Doctor, close your eyes</button>${back}</div>`;
+    } else {
+      body = `
+        <p class="stamp">Dawn</p>
+        <h1 class="display-xl">The sun comes up.</h1>
+        ${readAloud('Everyone, open your eyes.')}
+        <p class="deck">Then print the paper and read the front page to the table.</p>
+        <div class="grow"></div>
+        ${errorLine()}
+        <div class="actions"><button type="button" data-action="print">Print the morning paper</button>${back}</div>`;
+    }
+    app.innerHTML = `${masthead(`Night ${state.night}`, `${plural(alive().length, 'player', 'players')} in`)}${dots}${body}`;
+  }
+
+  // ---------- morning ----------
+  function morningStory() {
+    const r = state.report;
+    if (!r) return null;
+    if (r.killedId) {
+      const s = seat(r.killedId);
+      const headline = pickFrom([
+        `${s.name} sleeps with the fishes`,
+        `Tragedy on Elm Street: ${s.name} is gone`,
+        `${s.name} found at dawn. Town shaken`,
+        `Town mourns ${s.name}`,
+      ], r.night).replace(/^./, (c) => c.toUpperCase());
+      const deck = state.revealOnDeath ? `${s.name} was ${A[s.role]}. They’re out of the game.` : `${s.name} is out of the game. Their secret goes with them.`;
+      return { kicker: `Morning edition · Day ${r.night}`, headline, deck };
+    }
+    if (r.attackedId) {
+      return {
+        kicker: `Morning edition · Day ${r.night}`,
+        headline: pickFrom(['Close call! Mafia strike foiled', 'Doctor’s quick hands save a life', 'Mafia miss their mark'], r.night),
+        deck: 'The Mafia struck in the night, but the Doctor got there first. Nobody died.',
+      };
+    }
+    return {
+      kicker: `Morning edition · Day ${r.night}`,
+      headline: pickFrom(['A quiet night', 'Nothing stirs in town', 'Not a whisper all night'], r.night),
+      deck: 'Everyone wakes up. Suspicious, isn’t it?',
+    };
+  }
+
+  function frontPage(story) {
+    return `<article class="front-page">
+      <p class="kicker">${esc(story.kicker)}</p>
+      <h1 class="headline">${esc(story.headline)}</h1>
+      <hr>
+      <p class="deck">${esc(story.deck)}</p>
+    </article>`;
+  }
+
+  function renderMorning() {
+    const story = morningStory();
+    app.innerHTML = `
+      ${masthead(`Day ${state.night}`, `Game ${state.code}`)}
+      ${frontPage(story)}
+      ${readAloud(`${story.headline}. ${story.deck}`, 'Read the front page aloud')}
+      <div class="grow"></div>
+      ${errorLine()}
+      <div class="actions"><button type="button" data-action="day">Start the day</button>${undoButton()}</div>`;
+  }
+
+  // ---------- day ----------
+  const fmt = (sec) => `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
+  function timerLeft() { return timer.running ? Math.max(0, Math.round((timer.endsAt - Date.now()) / 1000)) : timer.left; }
+  function syncTimer() {
+    const out = $('timerOut');
+    if (!out) return;
+    const left = timerLeft();
+    out.textContent = left === 0 ? 'Time’s up' : fmt(left);
+    out.classList.toggle('done', left === 0);
+    if (left === 0 && timer.running) {
+      timer.running = false; timer.left = 0;
+      if (navigator.vibrate) navigator.vibrate([200, 100, 200]);
+      render();
+    }
+  }
+  function startTick() { clearInterval(timer.tick); timer.tick = setInterval(syncTimer, 500); }
+
+  function renderDay() {
+    if (trialId && !seat(trialId)?.alive) trialId = null;
+    const lv = state.lastVote;
+    const spared = lv && lv.outcome === 'spared' && lv.night === state.night ? seat(lv.seatId) : null;
+    const t = seat(trialId);
+    app.innerHTML = `
+      ${masthead(`Day ${state.night}`, `${plural(alive().length, 'player', 'players')} in`)}
+      <div class="stack">
+        <h1 class="display-xl">Talk it out.</h1>
+        <p class="deck">Accuse, defend, bluff. When the table is ready, put someone on trial.</p>
+      </div>
+
+      <section class="panel stack">
+        <div class="timer">
+          <output id="timerOut">${fmt(timerLeft())}</output>
+          <div class="chips">
+            <button class="small ${timer.running ? 'secondary' : ''}" type="button" data-action="timer-toggle">${timer.running ? 'Pause' : timerLeft() === 0 ? 'Restart' : 'Start'}</button>
+          </div>
+        </div>
+        <div class="chips" role="group" aria-label="Discussion length">
+          ${[2, 3, 5].map((m) => `<button class="chip" type="button" data-minutes="${m}" aria-pressed="${timer.total === m * 60}">${m} min</button>`).join('')}
+        </div>
+      </section>
+
+      ${spared ? `<div class="notice">${esc(spared.name)} was spared. Put someone else on trial, or end the day.</div>` : ''}
+
+      <section class="stack">
+        <h2 class="heading">Who’s on trial?</h2>
+        <div class="picks" role="group">
+          ${alive().map((s) => `
+            <button type="button" class="pick" data-trial="${s.id}" aria-pressed="${trialId === s.id}">
+              <span class="num">${num(state.seats.indexOf(s))}</span><span class="name">${esc(s.name)}</span><span class="radio"></span>
+            </button>`).join('')}
+        </div>
+      </section>
+
+      ${t ? `
+        <section class="stack" id="trial">
+          ${readAloud(`${t.name}, you’re on trial. Make your case. … Hands up if you vote ${t.name} out.`)}
+          ${errorLine()}
+          <div class="row-buttons">
+            <button type="button" data-action="vote-out">Voted out</button>
+            <button type="button" class="secondary" data-action="vote-spared">Spared</button>
+          </div>
+        </section>` : errorLine()}
+
+      <div class="actions">
+        <button class="ghost" type="button" data-action="end-day">End the day without a vote</button>
+        ${undoButton()}
+      </div>`;
+    if (timer.running) startTick();
+  }
+
+  // ---------- dusk (someone voted out) ----------
+  function renderDusk() {
+    const s = seat(state.lastVote.seatId);
+    const reveal = state.revealOnDeath ? `${s.name} was ${A[s.role]}.` : 'Their role stays secret until the end.';
+    app.innerHTML = `
+      ${masthead(`Day ${state.night}`, `${plural(alive().length, 'player', 'players')} in`)}
+      <article class="front-page">
+        <p class="kicker">Obituaries</p>
+        <h1 class="headline">${esc(s.name)} voted out</h1>
+        <hr>
+        <p class="deck">The town has spoken. ${esc(reveal)}</p>
+      </article>
+      ${readAloud(`${s.name}, you’re out. ${state.revealOnDeath ? `You were ${A[s.role]}. ` : ''}From now on, the dead keep quiet.`)}
+      <div class="grow"></div>
+      ${errorLine()}
+      <div class="actions"><button type="button" data-action="sleep">Night falls</button>${undoButton()}</div>`;
+  }
+
+  // ---------- game over ----------
+  function outLabel(s) {
+    if (s.alive) return 'Survived';
+    return s.out.how === 'vote' ? `Voted out · Day ${s.out.night}` : `Killed · Night ${s.out.night}`;
+  }
+
+  function mountOver() {
+    const town = state.winner === 'town';
+    app.innerHTML = `
+      ${masthead('Final edition', `Game ${state.code}`)}
+      <article class="front-page">
+        <p class="kicker">Extra! Extra!</p>
+        <h1 class="headline">${town ? 'The town is safe' : 'Mafia take the town'}</h1>
+        <hr>
+        <p class="deck">${town ? 'Every last member of the Mafia is out. Sleep easy, for now.' : 'The Mafia now match the town’s numbers. Nobody can outvote them.'}</p>
+      </article>
+      ${readAloud(town ? 'The town wins! Every Mafia member has been caught.' : 'The Mafia win! Lock your doors.')}
+
+      <section class="stack">
+        <h2 class="heading">Who was who</h2>
+        <ul class="rows" id="roster"></ul>
+      </section>
+
+      ${errorLine()}
+      <div class="actions">
+        <button type="button" data-action="again">Play again</button>
+        ${undoButton()}
+      </div>
+
+      <section class="stack-lg" id="letterBox"></section>
+
+      <section class="stack" id="lettersSection">
+        <div class="list-head">
+          <h2 class="heading" id="lettersCount"></h2>
+          <button class="small secondary" type="button" data-action="copy-letters" id="copyBtn">Copy all</button>
+        </div>
+        <p class="deck" id="lettersHint">Letters from the table appear here. Copy them before you close this page: the free host forgets games when it sleeps.</p>
+        <div class="letters" id="letters"></div>
+      </section>`;
+    $('letterBox').innerHTML = letterForm(letterSent);
+  }
+
+  function updateOver() {
+    $('roster').innerHTML = state.seats.map((s, i) => `
+      <li class="${s.alive ? '' : 'out'}">
+        <span class="num">${num(i)}</span>
+        <span class="name">${esc(s.name)}</span>
+        <span class="tag">${esc(outLabel(s))}</span>
+        <span class="role ${s.role}">${ROLE_LABEL[s.role]}</span>
+      </li>`).join('');
+    const letters = state.feedback.slice().reverse();
+    $('lettersCount').textContent = letters.length ? `Letters received (${letters.length})` : 'No letters yet';
+    $('copyBtn').hidden = letters.length === 0;
+    $('letters').innerHTML = letters.map((l) => `
+      <div class="letter">
+        <p class="from">${l.from === 'host' ? 'You (host)' : esc(l.name)} · round ${l.round}</p>
+        <dl>
+          ${l.again ? `<dt>Play again?</dt><dd>${esc({ yes: 'Yes', maybe: 'Maybe', no: 'No' }[l.again])}</dd>` : ''}
+          ${l.slowed ? `<dt>What slowed it down</dt><dd>${esc(l.slowed)}</dd>` : ''}
+          ${l.inTheWay ? `<dt>Where the app got in the way</dt><dd>${esc(l.inTheWay)}</dd>` : ''}
+          ${l.wish ? `<dt>Wish it did</dt><dd>${esc(l.wish)}</dd>` : ''}
+        </dl>
+      </div>`).join('');
+    $('actionError').textContent = error;
+  }
+
+  // ---------- render ----------
+  function render() {
+    const s = state;
+    document.body.classList.toggle('night', s.phase === 'night');
+    document.querySelector('meta[name=theme-color]').content = s.phase === 'night' ? '#151311' : '#f4efe4';
+    document.title = `The Mafia Daily · Game ${s.code}`;
+    if (s.phase !== 'day') clearInterval(timer.tick);
+
+    // Lobby and game-over screens hold form fields, so they're built once and then patched.
+    const key = s.phase === 'lobby' ? `lobby-${s.round}` : s.phase === 'over' ? `over-${s.round}-${letterSent}-${s.canUndo}` : '';
+    if (s.phase === 'lobby') {
+      if (mountedKey !== key) { mountLobby(); mountedKey = key; }
+      return updateLobby();
+    }
+    if (s.phase === 'over') {
+      if (mountedKey !== key) { mountOver(); mountedKey = key; }
+      return updateOver();
+    }
+    mountedKey = '';
+    if (s.phase === 'night') return renderNight();
+    if (s.phase === 'morning') return renderMorning();
+    if (s.phase === 'day') return renderDay();
+    if (s.phase === 'dusk') return renderDusk();
+  }
+
+  // ---------- events ----------
+  app.addEventListener('click', async (e) => {
+    const t = e.target;
+
+    const kick = t.closest('[data-kick]');
+    if (kick) {
+      if (!confirm(`Remove ${kick.dataset.name}? Their role goes back into the deck for someone else to scan.`)) return;
+      return act('kick', { seatId: Number(kick.dataset.kick) });
+    }
+
+    const pick = t.closest('[data-pick]');
+    if (pick) {
+      const id = pick.dataset.id === 'none' ? null : Number(pick.dataset.id);
+      if (pick.dataset.pick === 'attack') night.attackId = id; else night.saveId = id;
+      return render();
+    }
+
+    const trial = t.closest('[data-trial]');
+    if (trial) {
+      const id = Number(trial.dataset.trial);
+      trialId = trialId === id ? null : id;
+      render();
+      if (trialId) $('trial')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      return;
+    }
+
+    const mins = t.closest('[data-minutes]');
+    if (mins) {
+      timer.total = Number(mins.dataset.minutes) * 60;
+      timer.left = timer.total; timer.running = false;
+      clearInterval(timer.tick);
+      return render();
+    }
+
+    const btn = t.closest('[data-action]');
+    if (!btn) return;
+    const a = btn.dataset.action;
+
+    if (a === 'toggle-roles') { showRoles = !showRoles; return updateLobby(); }
+    if (a === 'start') return act('start');
+    if (a === 'redeal') {
+      $('dealError').textContent = '';
+      if (state.seats.length && !confirm('Deal a new round? Everyone gets a new role.')) return;
+      try {
+        state = await post('deal', {
+          players: $('players').value, mafia: $('mafia').value, doctors: $('doctors').value,
+          mafiaSeeEachOther: $('seeEachOther').checked, revealOnDeath: $('revealOnDeath').checked,
+        });
+        showRoles = false;
+        render();
+      } catch (err) { $('dealError').textContent = err.message; }
+      return;
+    }
+    if (a === 'undo') return act('undo');
+    if (a === 'night-next') { night.step += 1; return render(); }
+    if (a === 'night-back') { night.step = Math.max(0, night.step - 1); return render(); }
+    if (a === 'print') return act('night', { attackId: night.attackId ?? null, saveId: night.saveId ?? null });
+    if (a === 'day') { trialId = null; timer.left = timer.total; timer.running = false; return act('day'); }
+    if (a === 'timer-toggle') {
+      if (timer.running) { timer.left = timerLeft(); timer.running = false; clearInterval(timer.tick); }
+      else { if (timerLeft() === 0) timer.left = timer.total; timer.endsAt = Date.now() + timer.left * 1000; timer.running = true; }
+      return render();
+    }
+    if (a === 'vote-out') { const id = trialId; trialId = null; return act('vote', { seatId: id, outcome: 'out' }); }
+    if (a === 'vote-spared') { const id = trialId; trialId = null; return act('vote', { seatId: id, outcome: 'spared' }); }
+    if (a === 'end-day') {
+      if (!confirm('End the day without voting anyone out?')) return;
+      return act('sleep');
+    }
+    if (a === 'sleep') return act('sleep');
+    if (a === 'again') {
+      if (!confirm('Deal a new round with the same numbers? Everyone scans again for a new role.')) return;
+      letterSent = false;
+      return act('deal', { players: state.players, mafia: state.mafia, doctors: state.doctors, mafiaSeeEachOther: state.mafiaSeeEachOther, revealOnDeath: state.revealOnDeath });
+    }
+    if (a === 'copy-letters') {
+      const text = state.feedback.map(letterText).join('\n\n');
+      try { await navigator.clipboard.writeText(text); btn.textContent = 'Copied'; }
+      catch { prompt('Copy the letters:', text); }
+      setTimeout(() => { if ($('copyBtn')) $('copyBtn').textContent = 'Copy all'; }, 2000);
+      return;
+    }
+  });
+
+  app.addEventListener('click', (e) => {
+    if (e.target.closest('[data-fb-edit]')) { letterSent = false; render(); }
+  });
+  wireLetterForm(app, async (body) => { await post('feedback', body); }, () => { letterSent = true; render(); });
+
+  // ---------- start ----------
   async function setUpQr() {
     let base = location.origin;
     // A QR code pointing at "localhost" is useless to a phone, so swap in this
@@ -75,107 +553,30 @@
       const info = await fetch('/api/info').then((r) => r.json());
       if (info.lanUrls.length) {
         base = info.lanUrls[0];
-        $('lanNotice').hidden = false;
-        $('lanNotice').textContent = `Phones must be on the same Wi-Fi as this computer. They'll open ${base}.` +
-          (info.lanUrls.length > 1 ? ` If scanning doesn't work, try one of: ${info.lanUrls.slice(1).join(', ')}` : '');
+        qr.notice = `Phones must be on the same Wi-Fi as this computer. They’ll open ${base}.` +
+          (info.lanUrls.length > 1 ? ` If scanning doesn’t work, try one of: ${info.lanUrls.slice(1).join(', ')}` : '');
       } else {
-        $('lanNotice').hidden = false;
-        $('lanNotice').textContent = 'This computer has no network address phones can reach. Connect it to Wi-Fi, or host the app online.';
+        qr.notice = 'This computer has no network address phones can reach. Connect it to Wi-Fi, or host the app online.';
       }
     }
-    $('qr').src = `/api/rooms/${code}/qr.svg?base=${encodeURIComponent(base)}`;
-    $('joinUrl').textContent = `${base.replace(/^https?:\/\//, '')}/j/${code}`;
-    $('code').textContent = code;
+    qr.src = `/api/rooms/${code}/qr.svg?base=${encodeURIComponent(base)}`;
+    qr.url = `${base.replace(/^https?:\/\//, '')}/j/${code}`;
   }
-
-  function render() {
-    const s = state;
-    $('title').textContent = `Game ${s.code} · Round ${s.round}`;
-    const villagers = s.players - s.mafia - s.doctors;
-    $('summary').innerHTML =
-      `<span class="chip">${s.players} players</span>` +
-      `<span class="chip"><span class="dot mafia"></span>${s.mafia} Mafia</span>` +
-      `<span class="chip"><span class="dot doctor"></span>${s.doctors} Doctor${s.doctors === 1 ? '' : 's'}</span>` +
-      `<span class="chip"><span class="dot villager"></span>${villagers} Villager${villagers === 1 ? '' : 's'}</span>`;
-
-    const joined = s.seats.length;
-    const full = s.remaining === 0;
-    $('countLabel').textContent = full ? `All ${s.players} players have their roles` : `${joined} of ${s.players} joined`;
-    $('bar').style.width = `${(joined / s.players) * 100}%`;
-    $('qrHeading').textContent = full ? 'Everyone is in' : 'Scan to get your role';
-    $('qr').style.opacity = full ? 0.25 : 1;
-    $('empty').hidden = joined > 0;
-    $('toggleRoles').textContent = showRoles ? 'Hide roles' : 'Show roles';
-
-    $('seats').innerHTML = s.seats.map((seat, i) => `
-      <tr>
-        <td class="num">${i + 1}</td>
-        <td>${esc(seat.name)}</td>
-        <td>${showRoles
-          ? `<span class="role-tag ${seat.role}">${ROLE_LABEL[seat.role]}</span>`
-          : '<span class="role-tag hidden">•••••</span>'}</td>
-        <td class="act"><button class="danger" data-kick="${seat.id}" data-name="${esc(seat.name)}" type="button">Remove</button></td>
-      </tr>`).join('');
-
-    // Only fill the re-deal form when the user isn't editing it.
-    if (!$('players').matches(':focus') && !$('mafia').matches(':focus') && !$('doctors').matches(':focus')) {
-      $('players').value = s.players;
-      $('mafia').value = s.mafia;
-      $('doctors').value = s.doctors;
-      $('seeEachOther').checked = s.mafiaSeeEachOther;
-    }
-  }
-
-  async function post(path, body) {
-    const res = await fetch(`/api/rooms/${code}/${path}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'X-GM-Token': gmToken },
-      body: JSON.stringify(body),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error);
-    return data;
-  }
-
-  $('toggleRoles').addEventListener('click', () => { showRoles = !showRoles; render(); });
-
-  $('seats').addEventListener('click', async (e) => {
-    const btn = e.target.closest('[data-kick]');
-    if (!btn) return;
-    if (!confirm(`Remove ${btn.dataset.name}? Their role goes back into the deck for someone else to scan.`)) return;
-    state = await post('kick', { seatId: Number(btn.dataset.kick) });
-    render();
-  });
-
-  $('redeal').addEventListener('click', async () => {
-    $('dealError').textContent = '';
-    if (state.seats.length && !confirm('Deal a new round? Everyone gets a new role.')) return;
-    try {
-      state = await post('deal', {
-        players: $('players').value,
-        mafia: $('mafia').value,
-        doctors: $('doctors').value,
-        mafiaSeeEachOther: $('seeEachOther').checked,
-      });
-      showRoles = false;
-      render();
-    } catch (err) {
-      $('dealError').textContent = err.message;
-    }
-  });
 
   async function start() {
     const res = await fetch(`/api/rooms/${code}/gm`, { headers: { 'X-GM-Token': gmToken } });
     if (!res.ok) {
-      $('title').textContent = res.status === 404 ? 'Game not found' : 'Not allowed';
-      $('denied').hidden = false;
+      app.innerHTML = `${masthead('No. 00', 'Stop the presses')}
+        <section class="stack" id="denied">
+          <h1 class="display-l">${res.status === 404 ? 'Game not found' : 'This isn’t your host link'}</h1>
+          <p class="deck">Open the game from the device that created it, or <a href="/">start a new game</a>.</p>
+        </section>`;
       return;
     }
     state = await res.json();
-    $('game').hidden = false;
-    render();
     await setUpQr();
-    // Live updates as players scan. EventSource reconnects by itself.
+    render();
+    // Live updates as players scan or send letters. EventSource reconnects by itself.
     const events = new EventSource(`/api/rooms/${code}/gm/events?token=${encodeURIComponent(gmToken)}`);
     events.onmessage = (e) => { state = JSON.parse(e.data); render(); };
   }

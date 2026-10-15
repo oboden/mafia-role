@@ -74,7 +74,13 @@ function parseSetup(body) {
   if (!Number.isInteger(doctors) || doctors < 0) return 'Doctors cannot be negative.';
   if (mafia >= players - mafia) return 'Mafia must be fewer than everyone else, or they win immediately.';
   if (mafia + doctors >= players) return 'Leave room for at least 1 Villager.';
-  return { players, mafia, doctors, mafiaSeeEachOther: body.mafiaSeeEachOther !== false };
+  return {
+    players,
+    mafia,
+    doctors,
+    mafiaSeeEachOther: body.mafiaSeeEachOther !== false,
+    revealOnDeath: body.revealOnDeath !== false,
+  };
 }
 
 function buildDeck({ players, mafia, doctors }) {
@@ -94,16 +100,87 @@ function newCode() {
   return code;
 }
 
+// A game moves through these phases. The phones only record what the room
+// decided out loud: the host taps who the Mafia pointed at, who the Doctor
+// saved, and who the table voted out.
+//   lobby   -> players scan and get roles
+//   night   -> host walks the Mafia and Doctor through their turns
+//   morning -> the "morning paper" says what happened overnight
+//   day     -> discussion, trials and votes
+//   dusk    -> someone was voted out; their obituary is read
+//   over    -> one side has won
 function dealRound(room, setup) {
   Object.assign(room, setup);
   room.round = (room.round || 0) + 1;
   room.deck = buildDeck(room);
   room.seats = [];
+  room.phase = 'lobby';
+  room.night = 0;
+  room.report = null;
+  room.lastVote = null;
+  room.winner = null;
+  room.history = [];
+  room.feedback = room.feedback || [];
   room.touched = Date.now();
+}
+
+/** Rooms saved by an older version of the app lack the game-phase fields. */
+function normalise(room) {
+  room.phase = room.phase || 'lobby';
+  room.night = room.night || 0;
+  room.history = room.history || [];
+  room.feedback = room.feedback || [];
+  if (room.revealOnDeath === undefined) room.revealOnDeath = true;
+  return room;
 }
 
 function seatOf(room, token) {
   return room.seats.find((s) => s.token === token);
+}
+
+const isAlive = (s) => s.alive !== false;
+const aliveSeats = (room) => room.seats.filter(isAlive);
+
+/** 'town' when every Mafia is out, 'mafia' once they match everyone else, otherwise null. */
+function winnerOf(room) {
+  const alive = aliveSeats(room);
+  const mafia = alive.filter((s) => s.role === 'mafia').length;
+  if (mafia === 0) return 'town';
+  if (mafia >= alive.length - mafia) return 'mafia';
+  return null;
+}
+
+function eliminate(seat, how, night) {
+  seat.alive = false;
+  seat.out = { how, night };
+}
+
+// Undo: the host is running a game in a dark room from memory, so every phase
+// change can be stepped back once.
+function snapshot(room) {
+  room.history.push(JSON.stringify({
+    phase: room.phase,
+    night: room.night,
+    report: room.report,
+    lastVote: room.lastVote,
+    winner: room.winner,
+    seats: room.seats.map((s) => ({ id: s.id, alive: s.alive, out: s.out })),
+  }));
+  if (room.history.length > 40) room.history.shift();
+}
+
+function restore(room) {
+  const saved = JSON.parse(room.history.pop());
+  Object.assign(room, { phase: saved.phase, night: saved.night, report: saved.report, lastVote: saved.lastVote, winner: saved.winner });
+  for (const s of room.seats) {
+    const prev = saved.seats.find((p) => p.id === s.id);
+    s.alive = prev ? prev.alive : true;
+    s.out = prev ? prev.out : undefined;
+  }
+}
+
+function seatSummary(s) {
+  return { id: s.id, name: s.name, role: s.role, joinedAt: s.joinedAt, alive: isAlive(s), out: s.out || null };
 }
 
 function gmView(room) {
@@ -114,8 +191,16 @@ function gmView(room) {
     mafia: room.mafia,
     doctors: room.doctors,
     mafiaSeeEachOther: room.mafiaSeeEachOther,
-    seats: room.seats.map((s) => ({ id: s.id, name: s.name, role: s.role, joinedAt: s.joinedAt })),
+    revealOnDeath: room.revealOnDeath,
+    phase: room.phase,
+    night: room.night,
+    report: room.report,
+    lastVote: room.lastVote,
+    winner: room.winner,
+    canUndo: room.history.length > 0,
+    seats: room.seats.map(seatSummary),
     remaining: room.deck.length,
+    feedback: room.feedback.map(({ token, ...rest }) => rest),
   };
 }
 
@@ -125,15 +210,132 @@ function playerView(room, token) {
     code: room.code,
     round: room.round,
     full: room.deck.length === 0,
+    phase: room.phase,
+    night: room.night,
+    winner: room.winner,
     seat: null,
+    feedbackSent: room.feedback.some((f) => f.token === token && f.round === room.round),
   };
   if (seat) {
-    view.seat = { name: seat.name, role: seat.role };
+    view.seat = { name: seat.name, role: seat.role, alive: isAlive(seat), out: seat.out || null };
     if (seat.role === 'mafia' && room.mafiaSeeEachOther) {
-      view.seat.partners = room.seats.filter((s) => s.role === 'mafia' && s !== seat).map((s) => s.name);
+      view.seat.partners = room.seats
+        .filter((s) => s.role === 'mafia' && s !== seat)
+        .map((s) => ({ name: s.name, alive: isAlive(s) }));
     }
   }
+  // When the game ends everyone gets to see who was who.
+  if (room.phase === 'over') {
+    view.roster = room.seats.map((s) => ({ name: s.name, role: s.role, alive: isAlive(s), out: s.out || null }));
+  }
   return view;
+}
+
+function findAlive(room, id) {
+  if (id === null || id === undefined || id === '') return null;
+  return room.seats.find((s) => s.id === Number(id) && isAlive(s)) || undefined;
+}
+
+/** Applies one game-master phase action. Returns an error string, or nothing on success. */
+function runPhaseAction(room, action, body) {
+  const phase = room.phase;
+
+  if (action === 'undo') {
+    if (!room.history.length) return 'Nothing to undo.';
+    restore(room);
+    return;
+  }
+
+  if (action === 'start') {
+    if (phase !== 'lobby') return 'The game has already started.';
+    const seated = room.seats.length;
+    if (seated < 3) return 'You need at least 3 players in before starting.';
+    const mafia = room.seats.filter((s) => s.role === 'mafia').length;
+    if (mafia === 0) return 'None of the Mafia have scanned yet. Wait for more players.';
+    if (mafia >= seated - mafia) return 'Too many Mafia have joined compared to everyone else. Wait for more players.';
+    snapshot(room);
+    room.deck = []; // anyone who didn't scan in time sits this round out
+    for (const s of room.seats) { s.alive = true; s.out = undefined; }
+    room.phase = 'night';
+    room.night = 1;
+    room.report = null;
+    room.lastVote = null;
+    return;
+  }
+
+  if (action === 'night') {
+    if (phase !== 'night') return 'It is not night time.';
+    const attacked = findAlive(room, body.attackId);
+    if (attacked === undefined) return 'The Mafia must pick someone who is still in the game.';
+    const doctorAlive = aliveSeats(room).some((s) => s.role === 'doctor');
+    let saved = doctorAlive ? findAlive(room, body.saveId) : null;
+    if (saved === undefined) return 'The Doctor must pick someone who is still in the game.';
+    snapshot(room);
+    const killed = attacked && (!saved || saved.id !== attacked.id) ? attacked : null;
+    if (killed) eliminate(killed, 'night', room.night);
+    room.report = {
+      night: room.night,
+      attackedId: attacked ? attacked.id : null,
+      savedId: saved ? saved.id : null,
+      killedId: killed ? killed.id : null,
+    };
+    room.winner = winnerOf(room);
+    room.phase = room.winner ? 'over' : 'morning';
+    return;
+  }
+
+  if (action === 'day') {
+    if (phase !== 'morning') return 'Read the morning paper first.';
+    snapshot(room);
+    room.phase = 'day';
+    room.lastVote = null;
+    return;
+  }
+
+  if (action === 'vote') {
+    if (phase !== 'day') return 'Votes happen during the day.';
+    const seat = findAlive(room, body.seatId);
+    if (!seat) return 'Pick someone who is still in the game.';
+    if (!['out', 'spared'].includes(body.outcome)) return 'Say whether they were voted out or spared.';
+    snapshot(room);
+    room.lastVote = { seatId: seat.id, outcome: body.outcome, night: room.night };
+    if (body.outcome === 'out') {
+      eliminate(seat, 'vote', room.night);
+      room.winner = winnerOf(room);
+      room.phase = room.winner ? 'over' : 'dusk';
+    }
+    return;
+  }
+
+  if (action === 'sleep') {
+    if (phase !== 'day' && phase !== 'dusk') return 'Night only falls after a day.';
+    snapshot(room);
+    room.phase = 'night';
+    room.night += 1;
+    room.lastVote = null;
+    room.report = null;
+    return;
+  }
+
+  return 'Unknown action.';
+}
+
+// Free hosts (Render's free tier) wipe the disk when the app sleeps, so the
+// host should copy letters off the final screen the same night. Setting
+// FEEDBACK_WEBHOOK to any URL that accepts JSON (a Google Apps Script, a
+// Discord or Slack webhook, Formspree...) also sends each letter there.
+function forwardFeedback(room, letter) {
+  const url = process.env.FEEDBACK_WEBHOOK;
+  if (!url) return;
+  const { token, ...rest } = letter;
+  const payload = { game: room.code, players: room.seats.length, ...rest, at: new Date(letter.at).toISOString() };
+  // Discord and Slack webhooks only show a "content"/"text" field.
+  const summary = `Letter from ${rest.name} (${rest.from}) in game ${room.code}: play again? ${rest.again || '-'} | slowed: ${rest.slowed || '-'} | got in the way: ${rest.inTheWay || '-'} | wish: ${rest.wish || '-'}`;
+  fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...payload, content: summary, text: summary }),
+  }).catch((err) => console.error('Feedback webhook failed:', err.message));
 }
 
 // ---------- live updates (Server-Sent Events) ----------
@@ -209,6 +411,8 @@ const MIME = {
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.ico': 'image/x-icon',
+  '.woff2': 'font/woff2',
+  '.txt': 'text/plain; charset=utf-8',
 };
 
 function serveFile(res, file) {
@@ -269,6 +473,7 @@ async function handle(req, res) {
   if (parts[0] !== 'api' || parts[1] !== 'rooms' || !parts[2]) return json(res, 404, { error: 'Not found' });
   const room = rooms.get(parts[2].toUpperCase());
   if (!room) return json(res, 404, { error: 'That game does not exist any more. Ask the game master for a new QR code.' });
+  normalise(room);
   room.touched = Date.now();
   const action = parts.slice(3).join('/');
 
@@ -310,6 +515,7 @@ async function handle(req, res) {
   if (method === 'POST' && action === 'kick') {
     const body = await readBody(req);
     if (!isGm(room, req, body)) return json(res, 403, { error: 'Not the game master' });
+    if (room.phase !== 'lobby') return json(res, 409, { error: 'The game has started. Deal a new round to change who is playing.' });
     const idx = room.seats.findIndex((s) => s.id === body.seatId);
     if (idx === -1) return json(res, 404, { error: 'No such player' });
     const [seat] = room.seats.splice(idx, 1);
@@ -317,6 +523,49 @@ async function handle(req, res) {
     shuffle(room.deck);
     broadcast(room);
     return json(res, 200, gmView(room));
+  }
+
+  // --- game phases (game master only) ---
+  const PHASE_ACTIONS = ['start', 'night', 'day', 'vote', 'sleep', 'undo'];
+  if (method === 'POST' && PHASE_ACTIONS.includes(action)) {
+    const body = await readBody(req);
+    if (!isGm(room, req, body)) return json(res, 403, { error: 'Not the game master' });
+    const result = runPhaseAction(room, action, body);
+    if (typeof result === 'string') return json(res, 409, { error: result });
+    broadcast(room);
+    return json(res, 200, gmView(room));
+  }
+
+  // --- feedback ("letters to the editor"), from players or the host ---
+  if (method === 'POST' && action === 'feedback') {
+    const body = await readBody(req);
+    const gm = isGm(room, req, body);
+    const token = gm ? `gm:${room.gmToken}` : String(body.token || '');
+    if (!gm && (token.length < 16 || token.length > 64)) return json(res, 400, { error: 'Bad player token' });
+    const seat = gm ? null : seatOf(room, token);
+    const clip = (v) => String(v || '').trim().slice(0, 600);
+    const again = ['yes', 'maybe', 'no'].includes(body.again) ? body.again : '';
+    const letter = {
+      token,
+      at: Date.now(),
+      round: room.round,
+      from: gm ? 'host' : 'player',
+      name: gm ? 'Host' : seat ? seat.name : 'A guest',
+      again,
+      slowed: clip(body.slowed),
+      inTheWay: clip(body.inTheWay),
+      wish: clip(body.wish),
+    };
+    if (!letter.again && !letter.slowed && !letter.inTheWay && !letter.wish) {
+      return json(res, 400, { error: 'Answer at least one question before sending.' });
+    }
+    // One letter per phone per round; sending again replaces it.
+    room.feedback = room.feedback.filter((f) => !(f.token === token && f.round === room.round));
+    room.feedback.push(letter);
+    if (room.feedback.length > 200) room.feedback.shift();
+    forwardFeedback(room, letter);
+    broadcast(room);
+    return json(res, 200, { ok: true });
   }
 
   // --- players ---
@@ -346,6 +595,9 @@ async function handle(req, res) {
     if (token.length < 16 || token.length > 64) return json(res, 400, { error: 'Bad player token' });
     // A phone that already has a seat gets the same role back (refreshes, re-scans).
     if (seatOf(room, token)) return json(res, 200, playerView(room, token));
+    if (room.phase !== 'lobby') {
+      return json(res, 409, { error: 'This game has already started. Ask the host to deal you into the next round.' });
+    }
     const name = cleanName(body.name);
     if (!name) return json(res, 400, { error: 'Please enter your name.' });
     if (room.seats.some((s) => s.name.toLowerCase() === name.toLowerCase())) {

@@ -3,63 +3,96 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="theme-color" content="#121014">
-  <title>Your Mafia Role</title>
+  <meta name="theme-color" content="#f4efe4">
+  <title>The Mafia Daily · Your role</title>
   <link rel="stylesheet" href="/style.css">
+  <script src="/common.js"></script>
 </head>
-<body class="player">
+<body>
 <main>
-  <div class="brand center">Mafia</div>
+  <div id="mast"></div>
 
-  <section id="loading" class="center muted">Loading…</section>
+  <section id="loading" class="deck">Loading…</section>
 
-  <section id="gone" class="panel center" hidden>
-    <h2>Game not found</h2>
-    <p class="muted" id="goneMsg"></p>
+  <section id="gone" class="stack" hidden>
+    <h1 class="display-l">Game not found</h1>
+    <p class="deck" id="goneMsg"></p>
   </section>
 
-  <form id="joinForm" class="panel" hidden autocomplete="off">
-    <h1 id="joinTitle">What's your name?</h1>
-    <p class="muted" id="joinHint">The game master will see your name next to your role.</p>
-    <div class="field">
-      <input id="name" type="text" maxlength="24" placeholder="Your name" autocapitalize="words" enterkeyhint="go" required>
+  <form id="joinForm" class="stack-lg grow" hidden autocomplete="off">
+    <p class="stamp" id="joinStamp">You’re invited</p>
+    <div class="stack">
+      <h1 class="display-xl" id="joinTitle">What should we call you?</h1>
+      <p class="deck" id="joinHint">Your name goes on the host’s list. Your secrets don’t.</p>
     </div>
-    <button class="block" id="joinBtn" type="submit">Get my role</button>
-    <div class="error" id="error" role="alert"></div>
+    <div class="field">
+      <label for="name">Your name</label>
+      <input id="name" type="text" maxlength="24" placeholder="e.g. Kemi" autocapitalize="words" enterkeyhint="go" required>
+      <p class="hint">Use a nickname if someone shares your name.</p>
+    </div>
+    <div class="grow"></div>
+    <div class="stack">
+      <div class="error" id="error" role="alert"></div>
+      <button class="block" id="joinBtn" type="submit">Get my role</button>
+    </div>
   </form>
 
-  <section id="full" class="panel center" hidden>
-    <h2>All roles have been dealt</h2>
-    <p class="muted">Every seat in this game is taken. If you should be playing, ask the game master to remove a seat or deal a new round.</p>
+  <section id="full" class="stack" hidden>
+    <h1 class="display-l">All roles have been dealt</h1>
+    <p class="deck">Every seat in this game is taken. If you should be playing, ask the host to remove a seat or deal a new round.</p>
   </section>
 
-  <section id="role" hidden>
-    <p class="center hello">Hi <strong id="who"></strong>. Keep your screen hidden from others.</p>
-    <div class="card" id="card" role="button" tabindex="0" aria-live="polite">
-      <div id="cardHidden">
-        <div class="big-icon">🂠</div>
-        <p style="font-size: 1.3rem; font-weight: 700; margin-bottom: 4px">Tap to reveal your role</p>
-        <p class="hint">Tap again to hide it</p>
+  <section id="started" class="stack" hidden>
+    <p class="stamp">Game in progress</p>
+    <h1 class="display-l">You’ve missed this one.</h1>
+    <p class="deck">The game started without you. Keep this page open: when the host deals the next round, a button for your role appears here.</p>
+  </section>
+
+  <section id="role" class="stack-lg grow" hidden>
+    <div class="stack" id="status">
+      <p class="stamp" id="statusStamp" hidden>Out</p>
+      <h1 class="display-l" id="statusTitle"></h1>
+      <p class="deck" id="statusDeck"></p>
+    </div>
+    <div class="card" id="card" role="button" tabindex="0" aria-label="Press and hold to see your role">
+      <div class="stack" id="cardHidden" style="align-items:center">
+        <p class="stamp center">Classified</p>
+        <p class="title">Your role is inside</p>
+        <div class="hold" aria-hidden="true">Hold</div>
+        <p class="hint">Press and hold to peek. Tilt the phone towards you first. The person next to you is watching.</p>
       </div>
-      <div id="cardShown" hidden>
-        <div class="big-icon" id="icon"></div>
+      <div class="stack" id="cardShown" hidden style="align-items:center" aria-live="polite">
+        <p class="stamp center">For your eyes only</p>
+        <div class="illus" id="illus" aria-hidden="true"></div>
+        <p class="you-are">You are</p>
         <p class="role-name" id="roleName"></p>
-        <p id="roleDesc"></p>
+        <p class="desc" id="roleDesc"></p>
         <div class="partners" id="partners" hidden></div>
-        <p class="hint small" style="margin-top: 12px">Tap to hide</p>
       </div>
     </div>
+    <p class="deck center" id="cardFoot">Let go and it’s back in the envelope.</p>
+  </section>
+
+  <section id="over" class="stack-lg" hidden>
+    <article class="front-page">
+      <p class="kicker">Final edition</p>
+      <h1 class="headline" id="winHeadline"></h1>
+      <hr>
+      <p class="deck" id="winDeck"></p>
+    </article>
+    <section class="stack">
+      <h2 class="heading">Who was who</h2>
+      <ul class="rows" id="roster"></ul>
+    </section>
+    <section class="stack-lg" id="letterBox"></section>
   </section>
 </main>
 
 <script>
+  const { esc, ROLES, masthead, letterForm, wireLetterForm } = Mafia;
   const $ = (id) => document.getElementById(id);
   const code = location.pathname.split('/').pop().toUpperCase();
-  const ROLES = {
-    mafia: { icon: '🔪', name: 'Mafia', desc: 'Each night, agree with the other Mafia on someone to eliminate. By day, blend in and avoid suspicion.' },
-    doctor: { icon: '💉', name: 'Doctor', desc: 'Each night, choose one person to save. If the Mafia picks them, they survive.' },
-    villager: { icon: '🏡', name: 'Villager', desc: 'Find the Mafia. Discuss, accuse and vote them out before they outnumber you.' },
-  };
+  const A = { mafia: 'a Mafia member', doctor: 'the Doctor', villager: 'a Villager' };
 
   // One random id per phone, so a refresh or a re-scan gets the same seat back.
   const memory = {};
@@ -73,69 +106,133 @@
     token = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
     store.set('mafia-token', token);
   }
-  const savedName = store.get('mafia-name') || '';
-  $('name').value = savedName;
+  $('name').value = store.get('mafia-name') || '';
 
   let view = null;
   let shownRound = null; // which round's card is on screen
   let revealed = false;
+  let editingLetter = false;
+  let letterKey = '';
 
-  function show(id) {
-    for (const s of ['loading', 'gone', 'joinForm', 'full', 'role']) $(s).hidden = s !== id;
+  const SECTIONS = ['loading', 'gone', 'joinForm', 'full', 'started', 'role', 'over'];
+  function show(id) { for (const s of SECTIONS) $(s).hidden = s !== id; }
+  function theme(night) {
+    document.body.classList.toggle('night', night);
+    document.querySelector('meta[name=theme-color]').content = night ? '#151311' : '#f4efe4';
   }
+  function mast(left, right) { $('mast').innerHTML = masthead(left, right); }
 
-  function esc(s) {
-    return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-  }
-
+  // ---------- role card: press and hold ----------
   function renderCard() {
     const seat = view.seat;
     const r = ROLES[seat.role];
-    const card = $('card');
-    card.className = 'card' + (revealed ? ` ${seat.role}` : '');
     $('cardHidden').hidden = revealed;
     $('cardShown').hidden = !revealed;
-    $('icon').textContent = r.icon;
+    $('card').classList.toggle('revealed', revealed);
     $('roleName').textContent = r.name;
     $('roleDesc').textContent = r.desc;
+    Mafia.illustration($('illus'), seat.role);
     const p = seat.partners;
     $('partners').hidden = !p;
     if (p) {
       $('partners').innerHTML = p.length
-        ? `<strong>Your fellow Mafia:</strong> ${p.map(esc).join(', ')}`
-        : '<span class="muted">No other Mafia have scanned yet. This updates as they join.</span>';
+        ? `Your fellow Mafia: ${p.map((x) => (x.alive ? esc(x.name) : `<s>${esc(x.name)}</s>`)).join(', ')}`
+        : '<span class="muted">No other Mafia have scanned yet.</span>';
     }
   }
 
-  function render() {
-    if (view.seat) {
-      if (shownRound !== view.round) { revealed = false; shownRound = view.round; }
-      $('who').textContent = view.seat.name;
-      show('role');
-      renderCard();
-      return;
+  function setRevealed(on) {
+    if (revealed === on || !view || !view.seat) return;
+    revealed = on;
+    $('card').classList.toggle('pressing', on);
+    renderCard();
+  }
+  const card = $('card');
+  card.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    try { card.setPointerCapture(e.pointerId); } catch { /* some browsers refuse; release still hides it */ }
+    setRevealed(true);
+  });
+  for (const ev of ['pointerup', 'pointercancel', 'lostpointercapture']) card.addEventListener(ev, () => setRevealed(false));
+  card.addEventListener('contextmenu', (e) => e.preventDefault());
+  card.addEventListener('keydown', (e) => { if (e.key === ' ' || e.key === 'Enter') { e.preventDefault(); setRevealed(true); } });
+  card.addEventListener('keyup', (e) => { if (e.key === ' ' || e.key === 'Enter') setRevealed(false); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) setRevealed(false); });
+
+  // ---------- screens ----------
+  function renderRole() {
+    const s = view.seat;
+    theme(true);
+    const phaseLine = view.phase === 'lobby' ? 'Waiting to start'
+      : view.phase === 'night' ? `Night ${view.night}` : `Day ${view.night}`;
+    mast(`Round ${view.round}`, phaseLine);
+    if (!s.alive) {
+      $('statusStamp').hidden = false;
+      $('statusTitle').textContent = 'You’re out.';
+      $('statusDeck').textContent = s.out.how === 'vote'
+        ? `Voted out on day ${s.out.night}. From now on the dead keep quiet: no hints, no faces.`
+        : `The Mafia got you on night ${s.out.night}. From now on the dead keep quiet: no hints, no faces.`;
+    } else {
+      $('statusStamp').hidden = true;
+      $('statusTitle').textContent = view.phase === 'lobby' ? `You’re on the list, ${s.name}.` : `Hi ${s.name}.`;
+      $('statusDeck').textContent = view.phase === 'lobby'
+        ? 'Check your role, then put the phone face down. The host runs the rest out loud.'
+        : 'Phone face down. Everything happens around the table.';
     }
-    // No seat on this phone yet (first scan, a new round, or the GM removed us).
-    if (view.full) { show('full'); return; }
+    show('role');
+    renderCard();
+  }
+
+  function renderOver() {
+    theme(false);
+    mast('Final edition', `Game ${view.code}`);
+    const town = view.winner === 'town';
+    const me = view.seat;
+    const won = me && ((me.role === 'mafia') === !town);
+    $('winHeadline').textContent = town ? 'The town is safe' : 'Mafia take the town';
+    $('winDeck').textContent = (me ? `You were ${A[me.role]}. ${won ? 'You won.' : 'Better luck next round.'} ` : '') +
+      (town ? 'Every last Mafia member is out.' : 'The Mafia matched the town’s numbers.');
+    $('roster').innerHTML = (view.roster || []).map((s, i) => `
+      <li class="${s.alive ? '' : 'out'}">
+        <span class="num">${String(i + 1).padStart(2, '0')}</span>
+        <span class="name">${esc(s.name)}</span>
+        <span class="role ${s.role}">${ROLES[s.role].name}</span>
+      </li>`).join('');
+    // Rebuild the letter form only when its state changes, so typing isn't lost.
+    const sent = view.feedbackSent && !editingLetter;
+    const key = `${view.round}-${sent}`;
+    if (letterKey !== key) { $('letterBox').innerHTML = letterForm(sent); letterKey = key; }
+    show('over');
+  }
+
+  function renderJoin() {
+    theme(false);
+    mast('No. 01', `Game ${view.code}`);
+    if (view.phase !== 'lobby') return show('started');
+    if (view.full) return show('full');
     const newRound = shownRound !== null && shownRound !== view.round;
     const removed = shownRound !== null && shownRound === view.round;
-    $('joinTitle').textContent = newRound ? 'New round!' : removed ? 'You were removed' : "What's your name?";
+    $('joinStamp').textContent = newRound ? 'Late edition' : removed ? 'Correction' : 'You’re invited';
+    $('joinTitle').textContent = newRound ? 'Fresh roles have been dealt.' : removed ? 'You were taken off the list.' : 'What should we call you?';
     $('joinHint').textContent = newRound
-      ? 'The game master dealt new roles. Tap below to get yours.'
+      ? 'Last round is old news. Tap below for your new role, and tilt the phone away from your neighbours.'
       : removed
-        ? 'The game master took your seat back. Rejoin if you should be playing.'
-        : 'The game master will see your name next to your role.';
-    $('joinBtn').textContent = newRound ? 'Get my new role' : 'Get my role';
+        ? 'The host took your seat back. Rejoin if you should be playing.'
+        : 'Your name goes on the host’s list. Your secrets don’t.';
+    $('joinBtn').textContent = newRound ? 'Show my new role' : 'Get my role';
     if (!$('joinForm').hidden && document.activeElement === $('name')) return;
     show('joinForm');
   }
 
-  function toggle() {
-    revealed = !revealed;
-    renderCard();
+  function render() {
+    if (view.phase === 'over' && (view.roster || []).length) return renderOver();
+    if (view.seat) {
+      if (shownRound !== view.round) { revealed = false; shownRound = view.round; }
+      return renderRole();
+    }
+    // No seat on this phone yet (first scan, a new round, or the host removed us).
+    renderJoin();
   }
-  $('card').addEventListener('click', toggle);
-  $('card').addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(); } });
 
   $('joinForm').addEventListener('submit', async (e) => {
     e.preventDefault();
@@ -155,18 +252,32 @@
       view = data;
       render();
     } catch {
-      $('error').textContent = "Couldn't reach the game. Check your connection and try again.";
+      $('error').textContent = 'Couldn’t reach the game. Check your connection and try again.';
     } finally {
       $('joinBtn').disabled = false;
     }
   });
 
+  document.addEventListener('click', (e) => {
+    if (e.target.closest('[data-fb-edit]')) { editingLetter = true; render(); }
+  });
+  wireLetterForm($('letterBox'), async (body) => {
+    const res = await fetch(`/api/rooms/${code}/feedback`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token, ...body }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Couldn’t send. Try again.');
+  }, () => { editingLetter = false; view.feedbackSent = true; render(); });
+
   async function start() {
+    mast('No. 01', `Game ${code}`);
     let res;
     try {
       res = await fetch(`/api/rooms/${code}/me?token=${token}`);
     } catch {
-      $('loading').textContent = "Couldn't reach the game. Check you're on the same Wi-Fi as the game master.";
+      $('loading').textContent = 'Couldn’t reach the game. Check you’re on the same Wi-Fi as the host.';
       return;
     }
     const data = await res.json();
